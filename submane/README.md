@@ -36,18 +36,24 @@ git clone <リポジトリURL>
 cd submane
 
 # 仮想環境
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate        # Windows は .venv\Scripts\activate
 
-# バージョンは pyproject.toml に書いたものと同じにする
-pip install "flet[all]==<固定したバージョン>" httpx pytest
+# pyproject.toml の dependencies / dependency-groups.dev と同じバージョンを入れる
+pip install flet==1.0.3 flet-charts==1.0.3 httpx==0.28.1 \
+            flet-cli==1.0.3 flet-desktop==1.0.3 flet-web==1.0.3 pytest
 ```
+
+Python 3.12以上であれば動作します(3.14でも動作確認済み)。
 
 ### アプリを動かす
 
 ```bash
 # PC上のウィンドウで確認(コードを保存すると自動で反映される)
 flet run
+
+# ブラウザで確認したい場合
+flet run --web
 
 # Androidの実機で確認(スマホに「Flet」アプリを入れ、表示されるQRコードを読む)
 flet run --android
