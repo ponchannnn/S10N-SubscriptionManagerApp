@@ -26,8 +26,8 @@ def test_registration_normalizes_amount_and_preserves_manual_urls():
     ({"join_url": "javascript:alert(1)"}, "join_url"),
     ({"cancel_url": "https://user:pass@example.com"}, "cancel_url"),
     ({"cycle": "weekly"}, "cycle"), ({"status": "unknown"}, "status"),
-    ({"status": "trial", "trial_ends_at": ""}, "trial_ends_at"),
-    ({"status": "trial", "trial_ends_at": "2026-01-30T12:00"}, "trial_ends_at"),
+    ({"status": "trial", "trial_end_at": ""}, "trial_end_at"),
+    ({"status": "trial", "trial_end_at": "2026-01-30T12:00"}, "trial_end_at"),
 ])
 def test_invalid_registration(changes, field):
     with pytest.raises(ValidationError) as raised:
@@ -40,16 +40,16 @@ def test_zero_yen_and_leap_day_are_valid():
 
 
 def test_trial_records_ending_and_cancellation_discards_it():
-    data = validate_subscription(record(status="trial", trial_ends_at="2026-02-28T12:00"))
-    assert data["trial_ends_at"] == "2026-02-28T12:00"
+    data = validate_subscription(record(status="trial", trial_end_at="2026-02-28T12:00"))
+    assert data["trial_end_at"] == "2026-02-28T12:00"
     cancelled = validate_subscription({**data, **cancellation_patch()})
-    assert cancelled["trial_ends_at"] == ""
+    assert cancelled["trial_end_at"] == ""
     assert cancelled["cancel_url"] == data["cancel_url"]
 
 
 def test_reactivation_replaces_joined_date_and_clears_old_payment():
     patch = reactivation_patch(record(status="cancelled", next_payment_at="2026-02-28T12:00"), "2026-10-05T12:00")
-    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00", "trial_ends_at": "", "next_payment_at": None}
+    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00", "trial_end_at": "", "next_payment_at": None}
 
 
 def test_sort_keeps_cancelled_last_and_does_not_mutate_input():
@@ -61,7 +61,7 @@ def test_sort_keeps_cancelled_last_and_does_not_mutate_input():
 
 def test_deadline_sort_handles_unknown_dates_and_cancelled():
     items = [record(id="unknown"), record(id="later", next_payment_at="2026-12-01T00:00+09:00"),
-             record(id="trial", status="trial", trial_ends_at="2026-10-10T00:00"),
+             record(id="trial", status="trial", trial_end_at="2026-10-10T00:00"),
              record(id="cancelled", status="cancelled", next_payment_at="2026-01-01T00:00")]
     assert [item["id"] for item in sort_subscriptions(items, "deadline")] == ["trial", "later", "unknown", "cancelled"]
 

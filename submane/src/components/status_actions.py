@@ -32,9 +32,6 @@ def status_actions(page, subscription, api, on_changed):
             new_joined.error = error.errors.get("joined_at")
             page.update()
             return
-        # api_client(共通コード)側の項目名は trial_end_at(s なし)
-        if "trial_ends_at" in patch:
-            patch["trial_end_at"] = patch.pop("trial_ends_at") or None
         busy["value"] = True
         save.disabled = True
         new_joined.disabled = True

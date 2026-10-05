@@ -35,8 +35,8 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
                                   helper="日本時間・分単位の例：2026-10-05T12:30"),
         "status": ft.Dropdown(label="契約状態 *", value="active", options=[
             ft.DropdownOption(key=key, text=value) for key, value in STATUS_LABELS.items()]),
-        "trial_ends_at": ft.TextField(label="トライアル終了日時 *", visible=False,
-                                      hint_text="2026-11-05T12:30"),
+        "trial_end_at": ft.TextField(label="トライアル終了日時 *", visible=False,
+                                     hint_text="2026-11-05T12:30"),
         "join_url": ft.TextField(label="入会URL（任意）", hint_text="https://…"),
         "cancel_url": ft.TextField(label="退会URL（任意）", hint_text="https://…"),
         "cancel_memo": ft.TextField(label="退会に必要な情報（任意）", multiline=True,
@@ -46,7 +46,7 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
 
     def status_changed(event):
         """無料トライアルを選択したときだけ終了日時を表示する．"""
-        fields["trial_ends_at"].visible = fields["status"].value == "trial"
+        fields["trial_end_at"].visible = fields["status"].value == "trial"
         page.update()
 
     fields["status"].on_select = status_changed
@@ -128,8 +128,7 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
             message.value = "入力内容を確認してください．"
             page.update()
             return
-        # api_client(共通コード)側の項目名は trial_end_at(s なし)
-        data["trial_end_at"] = data.pop("trial_ends_at") or None
+        data["trial_end_at"] = data["trial_end_at"] or None
         selected["busy"] = True
         save_button.disabled = True
         for control in [search, plans, manual_button, back_button, *fields.values()]:
