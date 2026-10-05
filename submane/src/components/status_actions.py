@@ -1,6 +1,5 @@
 """詳細画面に組み込む解約・再契約の状態変更部品．"""
 from datetime import datetime
-import inspect
 import flet as ft
 import theme
 from api_client import ApiError
@@ -19,7 +18,7 @@ def status_actions(page, subscription, api, on_changed):
     confirm = ft.Checkbox(label="公式サイトで手続きを完了しました", value=False)
     busy = {"value": False}
 
-    async def change_status(event):
+    def change_status(event):
         """手続き完了確認後に保存し，成功した場合だけ一覧を更新する．"""
         if busy["value"]:
             return
@@ -33,6 +32,9 @@ def status_actions(page, subscription, api, on_changed):
             new_joined.error = error.errors.get("joined_at")
             page.update()
             return
+        # api_client(共通コード)側の項目名は trial_end_at(s なし)
+        if "trial_ends_at" in patch:
+            patch["trial_end_at"] = patch.pop("trial_ends_at") or None
         busy["value"] = True
         save.disabled = True
         new_joined.disabled = True
@@ -40,13 +42,11 @@ def status_actions(page, subscription, api, on_changed):
         error_text.value = ""
         page.update()
         try:
-            item = await api.update_subscription(subscription["id"], patch)
+            item = api.update_subscription(subscription["id"], patch)
         except ApiError as error:
             error_text.value = str(error)
         else:
-            result = on_changed(item)
-            if inspect.isawaitable(result):
-                await result
+            on_changed(item)
         finally:
             busy["value"] = False
             save.disabled = False
