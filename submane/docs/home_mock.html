@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>サブマネ | ホーム</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+/* ==========================================================
+   デザイントークン(他画面でも同じ値を使うと見た目が揃います)
+   ========================================================== */
+:root {
+  --ground: #F3F5F4;      /* 画面の地色 */
+  --surface: #FFFFFF;     /* ボタン・タブバーの面 */
+  --ink: #14201C;         /* 本文 */
+  --ink-sub: #4A5552;     /* 補足テキスト */
+  --line: #D3D8D6;        /* 枠線 */
+  --accent: #0E6B5C;      /* 主要ボタン・選択中 */
+  --accent-soft: #DCEBE7; /* 選択中タブの背景 */
+  --trial: #B45309;       /* 無料トライアルのバッジ */
+  --off-fill: #D3D8D6;    /* 解約済みアイコンの面 */
+  --off-ink: #5A6360;     /* 解約済みの文字 */
+  --dot: #AEB6B3;         /* ページ位置の点(非選択) */
+  --font: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --gutter: 24px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: inherit; text-decoration: none; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+/* PCで開いたときはスマホ幅で中央に置く */
+.app {
+  max-width: 430px;
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ---------- ヘッダー ---------- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px var(--gutter) 0;
+}
+.brand { font-size: 22px; font-weight: 900; letter-spacing: 0.02em; line-height: 44px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.btn-add {
+  height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: 22px;
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-account {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- 見出し ---------- */
+.intro { padding: 24px var(--gutter) 0; }
+.intro h1 { margin: 0; font-size: 26px; font-weight: 700; line-height: 34px; }
+.summary { margin: 4px 0 0; font-size: 13px; line-height: 20px; color: var(--ink-sub); }
+
+/* ---------- 並び替えと凡例 ---------- */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px var(--gutter) 0;
+}
+.sort { position: relative; display: flex; align-items: center; }
+.sort svg { position: absolute; pointer-events: none; }
+.sort .icon-sort { left: 12px; }
+.sort .icon-chevron { right: 12px; }
+.sort select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 44px;
+  padding: 0 34px 0 34px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.legend { display: flex; align-items: center; gap: 12px; margin: 0; padding: 0; list-style: none; font-size: 11px; line-height: 16px; color: var(--ink-sub); }
+.legend li { display: flex; align-items: center; gap: 5px; }
+.legend-trial {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--trial);
+  display: flex; align-items: center; justify-content: center;
+}
+.legend-off { width: 14px; height: 14px; border-radius: 4px; background: #C3CAC7; }
+
+/* ---------- アイコン一覧(横スワイプでページ送り) ---------- */
+.pager {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  padding-top: 28px;
+}
+.pager::-webkit-scrollbar { display: none; }
+.page {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: start;
+  gap: 26px 14px;
+  padding: 8px var(--gutter) 0; /* 上8pxはトライアルバッジのはみ出し分 */
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tile-icon {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+}
+.tile-icon img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; display: block; }
+.tile-name {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--trial);
+  border: 3px solid var(--ground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 解約済み: アイコンは残してグレーアウト */
+.tile.is-cancelled { color: var(--off-ink); }
+.tile.is-cancelled .tile-icon { background: var(--off-fill) !important; color: var(--off-ink); }
+.tile.is-cancelled .tile-icon img { filter: grayscale(1); opacity: 0.55; }
+
+/* ---------- ページ位置 ---------- */
+.page-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px var(--gutter) 24px;
+}
+.dots { display: flex; align-items: center; }
+.dot {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 28px;
+  height: 44px; /* タップしやすい大きさを確保 */
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--dot);
+  transition: width 0.2s, background 0.2s;
+}
+.dot[aria-current="true"]::before { width: 20px; background: var(--accent); }
+.page-count { margin: 0; font-size: 12px; line-height: 18px; color: var(--ink-sub); }
+
+/* ---------- 0件のとき ---------- */
+.empty { padding: 48px var(--gutter); text-align: center; }
+.empty p { margin: 0 0 20px; font-size: 14px; line-height: 24px; color: var(--ink-sub); }
+.empty .btn-add { display: inline-flex; }
+
+.spacer { flex: 1 1 auto; }
+
+/* ---------- 下部タブ ---------- */
+.tabbar {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  background: var(--surface);
+  border-top: 1px solid #DDE2E0;
+  padding: 8px var(--gutter) calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.tab {
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--ink-sub);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.tab-icon { width: 56px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; }
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"] .tab-icon { background: var(--accent-soft); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot::before { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div class="brand">サブマネ</div>
+    <div class="header-actions">
+      <a class="btn-add" data-link="register" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        追加
+      </a>
+      <a class="btn-account" data-link="account" href="#" aria-label="アカウント">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <h1>契約中のサブスク</h1>
+      <p class="summary" id="summary"></p>
+    </section>
+
+    <div class="controls" id="controls">
+      <label class="sort">
+        <svg class="icon-sort" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M7 20l-3-3M7 20l3-3M13 7h8M13 12h6M13 17h4"/></svg>
+        <select id="sort" aria-label="並び順">
+          <option value="frequency">更新頻度順</option>
+          <option value="registered">登録順</option>
+        </select>
+        <svg class="icon-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </label>
+      <ul class="legend">
+        <li>
+          <span class="legend-trial"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          トライアル中
+        </li>
+        <li><span class="legend-off"></span>解約済み</li>
+      </ul>
+    </div>
+
+    <!-- アイコン一覧。中身は下のスクリプトが描画する -->
+    <div class="pager" id="pager" tabindex="0" aria-label="サブスク一覧"></div>
+
+    <div class="page-status" id="pageStatus">
+      <div class="dots" id="dots"></div>
+      <p class="page-count" id="pageCount" aria-live="polite"></p>
+    </div>
+
+    <div class="empty" id="empty" hidden>
+      <p>まだサブスクが登録されていません。<br>契約中のサービスを追加すると、ここに一覧で表示されます。</p>
+      <a class="btn-add" data-link="register" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        サブスクを追加
+      </a>
+    </div>
+  </main>
+
+  <div class="spacer"></div>
+
+  <nav class="tabbar" aria-label="メインメニュー">
+    <a class="tab" data-link="home" href="#" aria-current="page">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg></span>
+      ホーム
+    </a>
+    <a class="tab" data-link="breakdown" href="#">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg></span>
+      内訳
+    </a>
+    <a class="tab" data-link="deadline" href="#">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg></span>
+      期限
+    </a>
+  </nav>
+</div>
+
+<script>
+/* ==========================================================
+   1. 他画面へのリンク先
+      ファイル名は仮です。各担当の画面ができたらここだけ直してください。
+   ========================================================== */
+const ROUTES = {
+  home: 'home.html',
+  register: 'register.html',   // サブスク登録画面
+  detail: 'detail.html',       // 詳細画面(?id=xxx を付けて開く)
+  breakdown: 'breakdown.html', // 内訳画面
+  deadline: 'deadline.html',   // 期限画面
+  account: 'account.html',     // 会員登録・ログイン
+};
+
+/* ==========================================================
+   2. 表示するデータ(サンプル)
+      DB・APIができたら loadSubscriptions() の中身を差し替えてください。
+        id     : 一意なID
+        name   : サービス名
+        cycle  : 'monthly' | 'yearly'            料金プランの更新周期
+        status : 'active' | 'trial' | 'cancelled' 契約中 / 無料トライアル中 / 解約済み
+        icon   : アイコン画像のURL(省略すると頭文字のタイルを表示)
+   ========================================================== */
+const SAMPLE_SUBSCRIPTIONS = [
+  { id: 'netflix',   name: 'Netflix',          cycle: 'monthly', status: 'active' },
+  { id: 'spotify',   name: 'Spotify',          cycle: 'monthly', status: 'active' },
+  { id: 'audible',   name: 'Audible',          cycle: 'monthly', status: 'cancelled' },
+  { id: 'unext',     name: 'U-NEXT',           cycle: 'monthly', status: 'trial' },
+  { id: 'amazon',    name: 'Amazonプライム',    cycle: 'yearly',  status: 'active' },
+  { id: 'youtube',   name: 'YouTube Premium',  cycle: 'monthly', status: 'active' },
+  { id: 'disney',    name: 'Disney+',          cycle: 'monthly', status: 'active' },
+  { id: 'fod',       name: 'FODプレミアム',     cycle: 'monthly', status: 'cancelled' },
+  { id: 'dazn',      name: 'DAZN',             cycle: 'monthly', status: 'active' },
+  { id: 'applemusic',name: 'Apple Music',      cycle: 'monthly', status: 'active' },
+  { id: 'adobe',     name: 'Adobe CC',         cycle: 'yearly',  status: 'active' },
+  { id: 'hulu',      name: 'Hulu',             cycle: 'monthly', status: 'active' },
+  { id: 'kindle',    name: 'Kindle Unlimited', cycle: 'monthly', status: 'trial' },
+  { id: 'lemino',    name: 'Lemino',           cycle: 'monthly', status: 'cancelled' },
+  { id: 'abema',     name: 'ABEMAプレミアム',   cycle: 'monthly', status: 'active' },
+  { id: 'icloud',    name: 'iCloud+',          cycle: 'monthly', status: 'active' },
+  { id: 'danime',    name: 'dアニメストア',     cycle: 'monthly', status: 'active' },
+  { id: 'nhk',       name: 'NHKオンデマンド',   cycle: 'monthly', status: 'cancelled' },
+];
+
+async function loadSubscriptions() {
+  // 例: const res = await fetch('/api/subscriptions'); return res.json();
+  return SAMPLE_SUBSCRIPTIONS;
+}
+
+/* ==========================================================
+   3. 画面の描画
+   ========================================================== */
+const PER_PAGE = 12; // 1ページ = 4列 x 3行
+const TILE_COLORS = ['#7A2E3A', '#2F5D50', '#1F3A5F', '#8A4B14', '#2B4C7E', '#3D4A1F', '#6B2D5C', '#23515E', '#4A3728', '#36594A', '#5B3F8C', '#5E2A4F'];
+const CYCLE_RANK = { weekly: 0, monthly: 1, yearly: 2 }; // 小さいほど更新頻度が高い
+const CLOCK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+const el = (id) => document.getElementById(id);
+const pager = el('pager');
+let subscriptions = [];
+
+// 並び替え。どの順でも解約済みは末尾にまとめる
+function sortSubscriptions(list, order) {
+  const indexed = list.map((sub, index) => ({ sub, index }));
+  indexed.sort((a, b) => {
+    const cancelledA = a.sub.status === 'cancelled' ? 1 : 0;
+    const cancelledB = b.sub.status === 'cancelled' ? 1 : 0;
+    if (cancelledA !== cancelledB) return cancelledA - cancelledB;
+    if (order === 'frequency') {
+      const rankA = CYCLE_RANK[a.sub.cycle] ?? 9;
+      const rankB = CYCLE_RANK[b.sub.cycle] ?? 9;
+      if (rankA !== rankB) return rankA - rankB;
+    }
+    return a.index - b.index; // 同順位は登録順
+  });
+  return indexed.map((item) => item.sub);
+}
+
+function createTile(sub, colorIndex) {
+  const tile = document.createElement('a');
+  tile.className = 'tile';
+  tile.href = ROUTES.detail + '?id=' + encodeURIComponent(sub.id);
+
+  const icon = document.createElement('span');
+  icon.className = 'tile-icon';
+  if (sub.icon) {
+    const img = document.createElement('img');
+    img.src = sub.icon;
+    img.alt = '';
+    icon.appendChild(img);
+  } else {
+    icon.style.background = sub.color || TILE_COLORS[colorIndex % TILE_COLORS.length];
+    icon.appendChild(document.createTextNode(sub.name.charAt(0)));
+  }
+
+  let stateLabel = '';
+  if (sub.status === 'trial') {
+    const badge = document.createElement('span');
+    badge.className = 'tile-badge';
+    badge.innerHTML = CLOCK_SVG;
+    icon.appendChild(badge);
+    stateLabel = '(無料トライアル中)';
+  } else if (sub.status === 'cancelled') {
+    tile.classList.add('is-cancelled');
+    stateLabel = '(解約済み)';
+  }
+
+  const name = document.createElement('span');
+  name.className = 'tile-name';
+  name.textContent = sub.name;
+
+  tile.setAttribute('aria-label', sub.name + stateLabel + 'の詳細を開く');
+  tile.append(icon, name);
+  return tile;
+}
+
+function render() {
+  const total = subscriptions.length;
+  const cancelled = subscriptions.filter((s) => s.status === 'cancelled').length;
+  const trial = subscriptions.filter((s) => s.status === 'trial').length;
+
+  const isEmpty = total === 0;
+  el('empty').hidden = !isEmpty;
+  el('controls').hidden = isEmpty;
+  pager.hidden = isEmpty;
+  el('pageStatus').hidden = isEmpty;
+  el('summary').textContent = isEmpty
+    ? ''
+    : `契約中 ${total - cancelled}件 / うちトライアル ${trial}件 / 解約済み ${cancelled}件`;
+  if (isEmpty) return;
+
+  // 色は登録順で固定し、並び替えても同じサービスは同じ色にする
+  const colorIndex = new Map(subscriptions.map((s, i) => [s.id, i]));
+  const sorted = sortSubscriptions(subscriptions, el('sort').value);
+
+  pager.textContent = '';
+  for (let i = 0; i < sorted.length; i += PER_PAGE) {
+    const page = document.createElement('div');
+    page.className = 'page';
+    sorted.slice(i, i + PER_PAGE).forEach((sub) => page.appendChild(createTile(sub, colorIndex.get(sub.id))));
+    pager.appendChild(page);
+  }
+  pager.scrollLeft = 0;
+  renderDots();
+}
+
+function pageTotal() { return pager.children.length; }
+function currentPage() { return Math.round(pager.scrollLeft / pager.clientWidth) || 0; }
+
+function renderDots() {
+  const dots = el('dots');
+  dots.textContent = '';
+  for (let i = 0; i < pageTotal(); i++) {
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'dot';
+    dot.setAttribute('aria-label', (i + 1) + 'ページ目を表示');
+    dot.addEventListener('click', () => {
+      pager.scrollTo({ left: i * pager.clientWidth, behavior: 'smooth' });
+    });
+    dots.appendChild(dot);
+  }
+  dots.hidden = pageTotal() < 2;
+  updatePageStatus();
+}
+
+function updatePageStatus() {
+  const current = currentPage();
+  [...el('dots').children].forEach((dot, i) => dot.setAttribute('aria-current', String(i === current)));
+  el('pageCount').textContent = pageTotal() < 2 ? '' : `${current + 1} / ${pageTotal()}`;
+}
+
+/* ==========================================================
+   4. 初期化
+   ========================================================== */
+document.querySelectorAll('[data-link]').forEach((a) => { a.href = ROUTES[a.dataset.link] || '#'; });
+el('sort').addEventListener('change', render);
+pager.addEventListener('scroll', updatePageStatus, { passive: true });
+window.addEventListener('resize', updatePageStatus);
+
+loadSubscriptions().then((list) => {
+  subscriptions = list;
+  render();
+});
+</script>
+</body>
+</html>

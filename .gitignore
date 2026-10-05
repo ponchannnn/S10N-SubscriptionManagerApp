@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Flet / Flutter build output
+build/
+
+# Editor
+.vscode/
+.idea/
