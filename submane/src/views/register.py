@@ -3,13 +3,21 @@ import asyncio
 from datetime import datetime
 import flet as ft
 import theme
-from api_client import ApiClient, ApiError
+import api_client
+import navigation
+from api_client import ApiError
+from logic.api_bridge import call_api
 from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
 def register_view(page, api=None, on_saved=None, on_back=None):
     """pageのみでも生成でき，共通APIと遷移コールバックを注入できる．"""
-    api = api or ApiClient()
+    api = api or api_client
+    def default_saved(item):
+        page.show_dialog(ft.SnackBar(ft.Text(item["name"] + "を保存しました．")))
+        navigation.go_back(page)
+    on_saved = on_saved or default_saved
+    on_back = on_back or (lambda: navigation.go_back(page))
     message = ft.Text("", color=theme.ERROR)
     results = ft.Column(spacing=8)
     plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
@@ -82,7 +90,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         results.controls = [ft.ProgressRing(width=20, height=20)]
         page.update()
         try:
-            services = await api.search_services(search.value or "")
+            services = await call_api(api, "search_services", search.value or "")
             if version != selected["search_version"]:
                 return
             results.controls = [ft.Button(service["name"], height=44,
@@ -146,7 +154,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
             control.disabled = True
         page.update()
         try:
-            item = await api.create_subscription(data)
+            item = await call_api(api, "create_subscription", data)
         except ApiError as error:
             message.value = str(error)
             aliases = {"custom_name": "name", "custom_join_url": "join_url",
@@ -180,7 +188,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
     back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
     search_button = ft.Button("定番サービスを表示・検索", height=44, on_click=search_services)
-    return ft.Column(spacing=16, controls=[
+    return ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, controls=[
         back_button, ft.Text("サブスクを追加", size=26, weight=ft.FontWeight.BOLD, color=theme.INK),
         ft.Text("サービスを選ぶか，契約内容を手入力してください．定番の名称・URL・退会案内を変更する場合は手入力に切り替えてください．", color=theme.INK_SUB),
         search, search_button, results,

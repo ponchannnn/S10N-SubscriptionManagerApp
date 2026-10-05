@@ -4,6 +4,7 @@ import inspect
 import flet as ft
 import theme
 from api_client import ApiError
+from logic.api_bridge import call_api
 from logic.subscriptions import JST, ValidationError, cancellation_patch, reactivation_patch, valid_url
 
 
@@ -41,7 +42,7 @@ def status_actions(page, subscription, api, on_changed):
         error_text.value = ""
         page.update()
         try:
-            item = await api.update_subscription(subscription["id"], patch)
+            item = await call_api(api, "update_subscription", subscription["id"], patch)
         except ApiError as error:
             error_text.value = str(error)
         else:

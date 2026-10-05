@@ -49,6 +49,8 @@ def validate_subscription(data):
         "name", "plan_name", "cycle", "joined_at", "join_url", "cancel_url",
         "cancel_memo", "status", "trial_ends_at", "icon", "service_id", "plan_id",
     )}
+    if not result["trial_ends_at"]:
+        result["trial_ends_at"] = str(data.get("trial_end_at") or "").strip()
     errors = {}
     for key, maximum in (("name", 100), ("plan_name", 100), ("cancel_memo", 1000)):
         if key != "cancel_memo" and not result[key]:
