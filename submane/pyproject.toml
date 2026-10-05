@@ -1,0 +1,21 @@
+[project]
+name = "submane-ishii"
+version = "0.1.0"
+description = "サブマネ 石井担当機能"
+requires-python = ">=3.12"
+dependencies = ["flet[all]==1.0.3", "httpx==0.28.1"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
+[tool.flet]
+org = "jp.ac.ibaraki.team.e1"
+product = "サブマネ"
+company = "Team E1"
+
+[tool.flet.app]
+path = "src"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

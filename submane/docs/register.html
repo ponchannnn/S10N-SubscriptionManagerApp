@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>サブマネ | サブスク登録</title>
+<style>
+@font-face { font-family: 'Zen Kaku Gothic New'; src: url('../src/assets/fonts/ZenKakuGothicNew-Regular.ttf') format('truetype'); font-display: swap; }
+:root { --ground:#F3F5F4; --surface:#fff; --ink:#14201C; --muted:#4A5552; --line:#D3D8D6; --accent:#0E6B5C; --soft:#DCEBE7; --trial:#B45309; --error:#B3261E; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--ground); color:var(--ink); font-family:'Zen Kaku Gothic New','Yu Gothic',sans-serif; }
+button,input,select,textarea { font:inherit; }
+button,a,input,select,textarea { -webkit-tap-highlight-color:transparent; }
+button { cursor:pointer; }
+[hidden] { display:none !important; }
+:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+.app { max-width:430px; margin:auto; min-height:100vh; padding:env(safe-area-inset-top) 24px calc(32px + env(safe-area-inset-bottom)); }
+header { display:flex; align-items:center; justify-content:space-between; padding:16px 0 10px; }
+.brand { font-size:22px; font-weight:900; color:var(--accent); }
+.back { min-height:44px; display:inline-flex; align-items:center; color:var(--muted); font-size:13px; text-decoration:none; }
+h1 { font-size:26px; line-height:1.4; margin:14px 0 8px; }
+h2 { font-size:18px; margin:0 0 16px; }
+p { line-height:1.7; }
+.intro { font-size:14px; color:var(--muted); margin:0 0 20px; }
+.demo { font-size:12px; background:var(--soft); color:var(--accent); border-radius:10px; padding:10px 12px; margin:0 0 24px; }
+.section { border-top:1px solid var(--line); padding:24px 0 8px; }
+.step { color:var(--accent); font-size:12px; display:block; margin-bottom:4px; letter-spacing:.08em; }
+.field { margin-bottom:18px; }
+label { display:block; font-size:13px; font-weight:bold; margin-bottom:7px; }
+.required { color:var(--accent); font-size:11px; margin-left:6px; }
+.optional { color:var(--muted); font-size:11px; font-weight:normal; margin-left:6px; }
+input,select,textarea { width:100%; min-width:0; min-height:48px; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--ink); background:var(--surface); font-size:15px; }
+textarea { resize:vertical; min-height:96px; }
+input[aria-invalid="true"],select[aria-invalid="true"] { border-color:var(--error); }
+.helper { display:block; margin:6px 0 0; font-size:12px; color:var(--muted); line-height:1.65; }
+.error { display:block; font-size:12px; line-height:1.6; color:var(--error); margin-top:5px; }
+.pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.results { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
+.service { display:flex; align-items:center; gap:12px; text-align:left; width:100%; padding:12px; background:var(--surface); border:1px solid var(--line); border-radius:12px; min-height:68px; }
+.service[aria-pressed="true"] { border:2px solid var(--accent); background:var(--soft); }
+.service-icon { flex:0 0 40px; height:40px; display:grid; place-items:center; border-radius:12px; color:white; background:var(--accent); font-size:18px; }
+.service-name { font-weight:bold; font-size:14px; }
+.service-note { color:var(--muted); font-size:11px; display:block; margin-top:2px; }
+.text-button { border:0; background:none; color:var(--accent); min-height:44px; padding:8px 0; font-size:13px; text-align:left; }
+.primary { width:100%; min-height:50px; border:0; border-radius:12px; background:var(--accent); color:white; font-size:15px; font-weight:bold; padding:12px; }
+button:disabled { cursor:default; opacity:.6; }
+.notice { margin:12px 0; font-size:13px; color:var(--error); }
+.success { border:1px solid var(--accent); background:var(--soft); border-radius:12px; padding:18px; margin:18px 0; }
+.success h2 { margin-bottom:8px; color:var(--accent); }
+.success p { font-size:13px; margin:4px 0; }
+.saved { padding:12px 0; border-bottom:1px solid var(--line); }
+.saved strong { display:block; font-size:14px; }
+.saved span { color:var(--muted); font-size:12px; }
+.saved.cancelled { opacity:.6; }
+.saved.trial strong::before { content:'◷ '; color:var(--trial); }
+footer { color:var(--muted); font-size:11px; text-align:center; margin-top:24px; }
+@media(max-width:350px) { .app { padding-left:16px; padding-right:16px; } .pair { grid-template-columns:1fr; gap:0; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header><span class="brand">サブマネ</span><a class="back" href="home_mock.html">‹ ホームの見本へ</a></header>
+  <main>
+    <h1>サブスクを追加</h1>
+    <p class="intro">サービスを選ぶか，契約内容を手入力して登録してください．</p>
+    <p class="demo">HTMLデモ：登録内容はこのブラウザに保存します．Flet版とは同期しません．</p>
+    <section aria-labelledby="search-heading">
+      <span class="step">STEP 01</span><h2 id="search-heading">サービスを選ぶ</h2>
+      <label for="search">定番サービスを名称で検索</label>
+      <input id="search" type="search" placeholder="動画，音楽，読書など" autocomplete="off" aria-describedby="master-note">
+      <span class="helper" id="master-note">表示される名称・料金・URLは架空のデモ情報です．</span>
+      <div class="results" id="results" aria-label="検索結果"></div>
+      <p class="helper" id="search-status" role="status"></p>
+      <button class="text-button" id="manual" type="button">＋ 定番にないサービスを手入力する</button>
+    </section>
+    <form id="registration" novalidate>
+      <section class="section" aria-labelledby="contract-heading">
+        <span class="step">STEP 02</span><h2 id="contract-heading">契約内容を入力</h2>
+        <div class="field" id="preset-field" hidden>
+          <label for="preset">定番サービスのプラン</label><select id="preset"></select>
+          <span class="helper">プランを選んだ後，各項目を修正できます．</span>
+        </div>
+        <div class="field"><label for="name">サービス名<span class="required">必須</span></label>
+          <input id="name" name="name" maxlength="100" required aria-describedby="name-error"><span class="error" id="name-error"></span></div>
+        <div class="field"><label for="plan_name">料金プラン名<span class="required">必須</span></label>
+          <input id="plan_name" name="plan_name" maxlength="100" placeholder="個人プランなど" required aria-describedby="plan_name-error"><span class="error" id="plan_name-error"></span></div>
+        <div class="pair">
+          <div class="field"><label for="cycle">更新周期<span class="required">必須</span></label>
+            <select id="cycle" name="cycle" aria-describedby="cycle-error"><option value="monthly">月額</option><option value="yearly">年額</option></select><span class="error" id="cycle-error"></span></div>
+          <div class="field"><label for="amount">1回の支払額（円）<span class="required">必須</span></label>
+            <input id="amount" name="amount" type="text" inputmode="numeric" placeholder="1000" required aria-describedby="amount-error amount-help"><span class="error" id="amount-error"></span></div>
+        </div>
+        <p class="helper" id="amount-help">無料トライアル中も，有料移行後の1回の金額を入力してください．</p>
+        <div class="field" style="margin-top:18px"><label for="joined_at">入会日時<span class="required">必須</span></label>
+          <input id="joined_at" name="joined_at" type="datetime-local" step="60" required aria-describedby="joined_at-error joined-help">
+          <span class="helper" id="joined-help">日本時間・分単位で入力してください．</span><span class="error" id="joined_at-error"></span></div>
+        <div class="field"><label for="status">契約状態<span class="required">必須</span></label>
+          <select id="status" name="status" aria-describedby="status-error"><option value="active">契約中</option><option value="trial">無料トライアル中</option><option value="cancelled">解約済み</option></select><span class="error" id="status-error"></span></div>
+        <div class="field" id="trial-field" hidden><label for="trial_ends_at">トライアル終了日時<span class="required">必須</span></label>
+          <input id="trial_ends_at" name="trial_ends_at" type="datetime-local" step="60" aria-describedby="trial_ends_at-error trial-help">
+          <span class="helper" id="trial-help">この日時をトライアルの次回支払日として扱います．</span><span class="error" id="trial_ends_at-error"></span></div>
+      </section>
+      <section class="section" aria-labelledby="url-heading">
+        <span class="step">STEP 03</span><h2 id="url-heading">入会・退会の情報</h2>
+        <div class="field"><label for="join_url">入会URL<span class="optional">任意</span></label>
+          <input id="join_url" name="join_url" type="url" maxlength="2048" placeholder="https://…" aria-describedby="join_url-error"><span class="error" id="join_url-error"></span></div>
+        <div class="field"><label for="cancel_url">退会URL<span class="optional">任意</span></label>
+          <input id="cancel_url" name="cancel_url" type="url" maxlength="2048" placeholder="https://…" aria-describedby="cancel_url-error"><span class="error" id="cancel_url-error"></span></div>
+        <div class="field"><label for="cancel_memo">退会に必要な情報<span class="optional">任意</span></label>
+          <textarea id="cancel_memo" name="cancel_memo" maxlength="1000" placeholder="例：メールアドレスとパスワードの準備が必要" aria-describedby="memo-help cancel_memo-error"></textarea>
+          <span class="helper" id="memo-help">パスワード自体は入力しないでください．必要な準備や手順だけを記録します．</span><span class="error" id="cancel_memo-error"></span></div>
+      </section>
+      <p class="notice" id="message" role="alert"></p>
+      <button class="primary" id="submit" type="submit">この内容で登録する</button>
+    </form>
+    <section class="success" id="success" aria-labelledby="success-heading" hidden>
+      <h2 id="success-heading">登録しました</h2><p id="success-detail"></p>
+      <button class="text-button" type="button" id="another">続けて別のサブスクを追加する →</button>
+    </section>
+    <section class="section" aria-labelledby="saved-heading">
+      <h2 id="saved-heading">このブラウザに登録したサブスク</h2>
+      <div id="saved-list"></div><p class="helper" id="saved-status" role="status"></p>
+      <button class="text-button" id="export" type="button" disabled>登録データをJSONで保存する ↓</button>
+    </section>
+  </main>
+  <footer>サブマネ · 石井担当の登録画面</footer>
+</div>
+<script>
+'use strict';
+const STORAGE_KEY = 'submane.ishii.html.subscriptions.v1';
+const SERVICES = [
+  { id:'video-demo', name:'動画サービス（デモ）', aliases:['動画','video'], join_url:'https://example.com/video/join', cancel_url:'https://example.com/video/cancel', cancel_memo:'退会手続きにはメールアドレスとパスワードの準備が必要です．', plans:[{name:'月額プラン（デモ）',cycle:'monthly',amount:1000},{name:'年額プラン（デモ）',cycle:'yearly',amount:10000}] },
+  { id:'music-demo', name:'音楽サービス（デモ）', aliases:['音楽','music'], join_url:'https://example.com/music/join', cancel_url:'https://example.com/music/cancel', cancel_memo:'契約した窓口を確認してください．', plans:[{name:'個人プラン（デモ）',cycle:'monthly',amount:800}] },
+  { id:'book-demo', name:'読書サービス（デモ）', aliases:['読書','book'], join_url:'https://example.com/book/join', cancel_url:'https://example.com/book/cancel', cancel_memo:'パスワードの準備が必要です．', plans:[{name:'月額プラン（デモ）',cycle:'monthly',amount:500}] }
+];
+const FIELD_NAMES = ['name','plan_name','cycle','amount','joined_at','status','trial_ends_at','join_url','cancel_url','cancel_memo'];
+const normalize = value => String(value).normalize('NFKC').toLocaleLowerCase('ja').trim();
+function searchServices(keyword) {
+  return SERVICES.filter(service => normalize([service.name,...service.aliases].join(' ')).includes(normalize(keyword)));
+}
+function validUrl(value) {
+  if (!value) return true;
+  if (/\s/.test(value) || value.length > 2048 || !/^https?:\/\//.test(value)) return false;
+  try { const url = new URL(value); return !!url.hostname && !url.username && !url.password && url.port !== '0'; }
+  catch { return false; }
+}
+function validTime(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year,month,day,hour,minute] = match.slice(1).map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59) return false;
+  const date = new Date(0); date.setUTCFullYear(year,month-1,day); date.setUTCHours(hour,minute,0,0);
+  return date.getUTCFullYear()===year && date.getUTCMonth()===month-1 && date.getUTCDate()===day;
+}
+function validate(raw) {
+  const data = Object.fromEntries(FIELD_NAMES.map(key => [key,String(raw[key] ?? '').trim()]));
+  const errors = {};
+  for (const key of ['name','plan_name']) {
+    if (!data[key]) errors[key] = '入力してください．';
+    else if ([...data[key]].length > 100) errors[key] = '100文字以内で入力してください．';
+  }
+  const amount = data.amount.normalize('NFKC');
+  if (!/^\d+$/.test(amount) || Number(amount) > 999999999) errors.amount = '0以上999999999以下の整数を円単位で入力してください．';
+  else data.amount = Number(amount);
+  if (!['monthly','yearly'].includes(data.cycle)) errors.cycle = '月額または年額を選択してください．';
+  if (!['active','trial','cancelled'].includes(data.status)) errors.status = '契約状態を選択してください．';
+  if (!validTime(data.joined_at)) errors.joined_at = '実在する入会日時を分単位で入力してください．';
+  if (data.status === 'trial') {
+    if (!validTime(data.trial_ends_at)) errors.trial_ends_at = 'トライアル終了日時を入力してください．';
+    else if (validTime(data.joined_at) && data.trial_ends_at <= data.joined_at) errors.trial_ends_at = '入会日時より後の日時を入力してください．';
+  } else data.trial_ends_at = '';
+  for (const key of ['join_url','cancel_url']) if (!validUrl(data[key])) errors[key] = 'http://またはhttps://で始まるURLを入力してください．';
+  if ([...data.cancel_memo].length > 1000) errors.cancel_memo = '1000文字以内で入力してください．';
+  return {data,errors};
+}
+function readRecords(storage) {
+  const records = JSON.parse(storage.getItem(STORAGE_KEY) || '[]');
+  if (!Array.isArray(records) || records.some(item => !item || typeof item !== 'object' || typeof item.id !== 'string' || typeof item.name !== 'string' || !Number.isInteger(item.amount))) throw new Error('invalid records');
+  return records;
+}
+globalThis.SubmaneRegistration = {validate,validUrl,validTime,searchServices,readRecords,STORAGE_KEY};
+
+function initialize() {
+  const el = id => document.getElementById(id);
+  let selected = null, busy = false, records = [];
+  function japaneseNow() {
+    const parts = new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map(part => [part.type,part.value]));
+    return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+  }
+  function clearErrors() {
+    FIELD_NAMES.forEach(key => { el(key).removeAttribute('aria-invalid'); el(key+'-error').textContent=''; });
+    el('message').textContent='';
+  }
+  function applyPlan() {
+    if (!selected) return;
+    const plan = selected.plans[Number(el('preset').value)];
+    el('plan_name').value=plan.name; el('cycle').value=plan.cycle; el('amount').value=plan.amount;
+  }
+  function choose(service) {
+    if (busy) return;
+    selected=service; clearErrors();
+    ['name','join_url','cancel_url','cancel_memo'].forEach(key => { el(key).value=service[key]; });
+    el('preset').replaceChildren(...service.plans.map((plan,index) => new Option(plan.name,String(index))));
+    el('preset-field').hidden=false; applyPlan(); renderSearch();
+    el('search-status').textContent='選択済み：'+service.name;
+  }
+  function renderSearch() {
+    const matches=searchServices(el('search').value); el('results').replaceChildren();
+    matches.forEach(service => {
+      const button=document.createElement('button'); button.type='button'; button.className='service';
+      button.setAttribute('aria-pressed',String(selected?.id===service.id));
+      const icon=document.createElement('span'); icon.className='service-icon'; icon.textContent=service.name[0]; icon.setAttribute('aria-hidden','true');
+      const text=document.createElement('span'); text.className='service-name'; text.textContent=service.name;
+      const note=document.createElement('span'); note.className='service-note'; note.textContent='プラン・入会URL・退会URLを自動入力'; text.append(note);
+      button.append(icon,text); button.addEventListener('click',()=>choose(service)); el('results').append(button);
+    });
+    el('search-status').textContent=matches.length ? `${matches.length}件のサービス` : '該当するサービスがありません．下の欄に手入力できます．';
+  }
+  function setTrial() {
+    const trial=el('status').value==='trial'; el('trial-field').hidden=!trial;
+    el('trial_ends_at').required=trial; if (!trial) el('trial_ends_at').value='';
+  }
+  function renderSaved() {
+    el('saved-list').replaceChildren();
+    records.forEach(item => {
+      const row=document.createElement('div'); row.className='saved '+item.status;
+      const name=document.createElement('strong'); name.textContent=item.name;
+      const detail=document.createElement('span'); detail.textContent=`${item.cycle==='yearly'?'年額':'月額'} · ${item.amount.toLocaleString('ja-JP')}円 · ${{active:'契約中',trial:'無料トライアル中',cancelled:'解約済み'}[item.status] || '状態未設定'}`;
+      row.append(name,detail); el('saved-list').append(row);
+    });
+    el('saved-status').textContent=records.length ? `${records.length}件を保存しています．` : 'まだ登録がありません．';
+    el('export').disabled=!records.length;
+  }
+  el('search').addEventListener('input',renderSearch);
+  el('preset').addEventListener('change',applyPlan);
+  el('status').addEventListener('change',setTrial);
+  el('manual').addEventListener('click',()=>{
+    selected=null; clearErrors(); el('preset-field').hidden=true;
+    ['name','plan_name','amount','join_url','cancel_url','cancel_memo'].forEach(key=>{ el(key).value=''; });
+    renderSearch(); el('name').focus();
+  });
+  el('registration').addEventListener('submit',event=>{
+    event.preventDefault(); if (busy) return; clearErrors();
+    const raw=Object.fromEntries(FIELD_NAMES.map(key=>[key,el(key).value]));
+    const {data,errors}=validate(raw);
+    if (Object.keys(errors).length) {
+      Object.entries(errors).forEach(([key,text])=>{ el(key).setAttribute('aria-invalid','true'); el(key+'-error').textContent=text; });
+      el('message').textContent='入力内容を確認してください．'; el(Object.keys(errors)[0]).focus(); return;
+    }
+    busy=true; el('submit').disabled=true;
+    try {
+      const current=readRecords(localStorage);
+      const id=globalThis.crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+      const item={...data,id,service_id:selected?.id || '',icon:'',registered_at:new Date().toISOString(),next_payment_at:data.status==='trial'?data.trial_ends_at:null};
+      localStorage.setItem(STORAGE_KEY,JSON.stringify([...current,item])); records=[...current,item]; renderSaved();
+      el('success-detail').textContent=`${data.name} · ${data.cycle==='yearly'?'年額':'月額'} ${data.amount.toLocaleString('ja-JP')}円`;
+      el('registration').hidden=true; el('success').hidden=false;
+      el('search').disabled=true; el('manual').disabled=true; el('results').querySelectorAll('button').forEach(button=>{button.disabled=true;});
+      el('success').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
+    } catch {
+      el('message').textContent='保存できませんでした．ブラウザの保存設定，空き容量，保存済みデータの形式を確認してください．入力内容は残っています．';
+    } finally { busy=false; el('submit').disabled=false; }
+  });
+  el('another').addEventListener('click',()=>{
+    el('registration').reset(); selected=null; clearErrors(); el('preset-field').hidden=true;
+    el('joined_at').value=japaneseNow(); setTrial(); el('success').hidden=true; el('registration').hidden=false;
+    el('search').disabled=false; el('manual').disabled=false; renderSearch(); el('search').focus();
+  });
+  el('export').addEventListener('click',()=>{
+    const blob=new Blob([JSON.stringify(records,null,2)],{type:'application/json;charset=utf-8'});
+    const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download='submane-html-subscriptions.json';
+    document.body.append(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  el('joined_at').value=japaneseNow(); renderSearch(); setTrial();
+  try { records=readRecords(localStorage); renderSaved(); }
+  catch { el('saved-status').textContent='保存済みデータを読み取れません．ブラウザの保存設定またはデータ形式を確認してください．'; }
+}
+if (typeof document !== 'undefined') initialize();
+</script>
+</body>
+</html>

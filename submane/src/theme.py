@@ -1,0 +1,15 @@
+"""home.htmlに合わせた共通デザイン定数．"""
+GROUND = "#F3F5F4"
+SURFACE = "#FFFFFF"
+INK = "#14201C"
+INK_SUB = "#4A5552"
+LINE = "#D3D8D6"
+ACCENT = "#0E6B5C"
+ACCENT_SOFT = "#E0EFE9"
+TRIAL = "#B45309"
+OFF_FILL = "#D3D8D6"
+OFF_INK = "#5A6360"
+ERROR = "#B3261E"
+GUTTER = 24
+FONT = "Zen Kaku Gothic New"
+TILE_COLORS = ("#7A2E3A", "#2F5D50", "#1F3A5F", "#8A4B14")

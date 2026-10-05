@@ -12,3 +12,10 @@ build/
 # Editor
 .vscode/
 .idea/
+
+# ローカル作業・テスト生成物
+.pytest_cache/
+.reference/
+.tools/
+data/
+*.log
