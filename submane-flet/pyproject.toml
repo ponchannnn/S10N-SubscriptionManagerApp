@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "submane"
+version = "0.2.0"
+description = "チームE1 サブスクリプション管理アプリ"
+requires-python = ">=3.12,<3.13"
+dependencies = ["flet==1.0.3", "httpx==0.28.1"]
+
+[project.optional-dependencies]
+dev = ["flet[all]==1.0.3", "pytest==8.4.2"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["main", "config", "theme", "api_client", "dummy_data", "validation", "auth_validation", "app_context"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["components*", "views*"]
+
+[tool.flet]
+org = "jp.team_e1"
+product = "サブマネ"
+company = "チームE1"
+
+[tool.flet.app]
+path = "src"
+module = "main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
