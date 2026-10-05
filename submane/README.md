@@ -95,6 +95,7 @@ submane/
 │   ├── config.py           # APIのURL、ダミーデータの切り替え
 │   ├── theme.py            # 色・フォント・余白(全画面共通)
 │   ├── api_client.py       # APIの呼び出しをまとめる
+│   ├── local_db.py         # 端末内SQLite(ログイン状態・設定・前回取得分のキャッシュ。docs/local_db.md参照)
 │   ├── dummy_data.py       # APIができるまで使うダミーデータ
 │   ├── components/
 │   │   ├── app_header.py   # ヘッダー(アプリ名、追加、アカウント)
@@ -115,7 +116,8 @@ submane/
 │       └── icons/
 ├── tests/
 │   ├── test_dates.py
-│   └── test_payments.py
+│   ├── test_payments.py
+│   └── test_local_db.py
 └── docs/
     └── home_mock.html      # ホーム画面の見本(見た目の参考用)
 ```
@@ -230,6 +232,7 @@ APIの仕様を決めるのはAPI担当です。この章は「アプリ側が�
 - APIの呼び出しは `api_client.py` にまとめ、各画面から直接 `httpx` を呼ばない
 - `api_client.py` の関数は、`USE_DUMMY_DATA` が `True` の間は `dummy_data.py` の内容を返す。画面のコードはダミーか本物かを意識しない
 - APIの項目名が変わっても画面を直さずに済むよう、項目名の変換は `api_client.py` の中で行う
+- 本物のAPI(`USE_DUMMY_DATA = False`)に繋いだときの端末内キャッシュ・オフライン時の動きは `docs/local_db.md` にまとめている。画面から `local_db.py` を直接呼ばないのはダミーデータと同じ理由
 
 ## 6. 画面の切り替え
 
