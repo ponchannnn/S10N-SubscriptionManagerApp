@@ -1,0 +1,32 @@
+[project]
+name = "submane"
+version = "0.1.0"
+description = "サブスクリプション管理アプリ「サブマネ」"
+readme = "README.md"
+requires-python = ">=3.12"
+# アプリ(APK)に入るライブラリ。バージョンは全員そろえる。上げるときは全員で同時に。
+dependencies = [
+    "flet==1.0.3",
+    "flet-charts==1.0.3",   # 内訳画面の円グラフ
+    "httpx==0.28.1",        # APIの呼び出し
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli==1.0.3",
+    "flet-desktop==1.0.3",
+    "flet-web==1.0.3",
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.flet]
+org = "jp.e1"                 # 仮。パッケージ名の先頭になる
+product = "サブマネ"
+company = "Team E1"
+
+[tool.flet.app]
+path = "src"
