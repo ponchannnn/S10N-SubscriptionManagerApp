@@ -14,6 +14,7 @@ from typing import Callable
 import flet as ft
 
 import api_client
+import local_db
 import navigation
 import theme
 from components import feedback
@@ -80,6 +81,7 @@ def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Contr
 
 def main(page: ft.Page) -> None:
     """アプリの入口。"""
+    local_db.init_db()
     page.title = "サブマネ"
     theme.apply(page)
 
