@@ -1,19 +1,29 @@
-"""石井担当：定番サービス検索と手入力によるサブスク登録画面．"""
-import asyncio
+"""サブスク登録画面(担当: 石井)。定番サービスの検索と手入力の両方に対応する。"""
 from datetime import datetime
+
 import flet as ft
+
+import api_client
+import navigation
 import theme
-from api_client import ApiClient, ApiError
+from api_client import ApiError
 from logic.subscriptions import CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
-def register_view(page, api=None, on_saved=None, on_back=None):
-    """pageのみでも生成でき，共通APIと遷移コールバックを注入できる．"""
-    api = api or ApiClient()
+def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
+    """pageのみでも生成でき，一覧側から保存・戻る時の挙動を注入できる．"""
+
+    def default_saved(item):
+        page.open(ft.SnackBar(ft.Text(item["name"] + "を保存しました．")))
+        navigation.go_back(page)
+
+    on_back = on_back or (lambda: navigation.go_back(page))
+    on_saved = on_saved or default_saved
+
     message = ft.Text("", color=theme.ERROR)
     results = ft.Column(spacing=8)
     plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
-    selected = {"service": None, "search_version": 0, "busy": False}
+    selected = {"service": None, "busy": False}
     fields = {
         "name": ft.TextField(label="サービス名 *", max_length=100),
         "plan_name": ft.TextField(label="料金プラン名 *", max_length=100),
@@ -67,19 +77,10 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         results.controls = [ft.Text("選択済み：" + service["name"], color=theme.ACCENT)]
         page.update()
 
-    async def search_services(event=None):
-        """連続入力では古い検索結果を破棄し，失敗時は再試行できる．"""
-        selected["search_version"] += 1
-        version = selected["search_version"]
-        await asyncio.sleep(0.25)
-        if version != selected["search_version"]:
-            return
-        results.controls = [ft.ProgressRing(width=20, height=20)]
-        page.update()
+    def search_services(event=None):
+        """定番サービスを名称で検索し，候補をボタンで一覧表示する．"""
         try:
-            services = await api.search_services(search.value or "")
-            if version != selected["search_version"]:
-                return
+            services = api_client.search_services(search.value or "")
             results.controls = [ft.Button(service["name"], height=44,
                                on_click=lambda e, service=service: choose_service(service)) for service in services]
             if not services:
@@ -101,7 +102,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         results.controls = []
         page.update()
 
-    async def save(event):
+    def save(event):
         """入力を検証し，二重クリックによる重複登録を防ぐ．"""
         if selected["busy"]:
             return
@@ -127,23 +128,19 @@ def register_view(page, api=None, on_saved=None, on_back=None):
             message.value = "入力内容を確認してください．"
             page.update()
             return
+        # api_client(共通コード)側の項目名は trial_end_at(s なし)
+        data["trial_end_at"] = data.pop("trial_ends_at") or None
         selected["busy"] = True
         save_button.disabled = True
         for control in [search, plans, manual_button, back_button, *fields.values()]:
             control.disabled = True
         page.update()
         try:
-            item = await api.create_subscription(data)
+            item = api_client.create_subscription(data)
         except ApiError as error:
             message.value = str(error)
         else:
-            if on_saved:
-                result = on_saved(item)
-                if asyncio.iscoroutine(result):
-                    await result
-            else:
-                message.color = theme.ACCENT
-                message.value = "登録しました．"
+            on_saved(item)
         finally:
             selected["busy"] = False
             save_button.disabled = False
@@ -154,8 +151,8 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     save_button = ft.Button("この内容で登録する", icon=ft.Icons.ADD, bgcolor=theme.ACCENT,
                             color=theme.SURFACE, height=48, on_click=save)
     manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
-    back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
-    return ft.Column(spacing=16, controls=[
+    back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back())
+    return ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, controls=[
         back_button, ft.Text("サブスクを追加", size=26, weight=ft.FontWeight.BOLD, color=theme.INK),
         ft.Text("サービスを選ぶか，契約内容を手入力してください．", color=theme.INK_SUB),
         search, ft.Button("定番サービスを表示・検索", height=44, on_click=search_services), results,
