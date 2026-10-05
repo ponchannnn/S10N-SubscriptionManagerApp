@@ -1,5 +1,7 @@
 """UIから独立した登録・解約・再契約の規則．"""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+JST = timezone(timedelta(hours=9))
 from urllib.parse import urlsplit
 import unicodedata
 
@@ -37,14 +39,15 @@ def valid_url(value):
 
 def parse_time(value):
     """画面とAPIで共通の分単位の日時形式を読み取る．"""
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M")
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return parsed.replace(tzinfo=JST) if parsed.tzinfo is None else parsed
 
 
 def validate_subscription(data):
     """登録内容を検証し，APIへ渡す辞書を返す．"""
     result = {key: str(data.get(key, "") or "").strip() for key in (
         "name", "plan_name", "cycle", "joined_at", "join_url", "cancel_url",
-        "cancel_memo", "status", "trial_ends_at", "icon", "service_id",
+        "cancel_memo", "status", "trial_ends_at", "icon", "service_id", "plan_id",
     )}
     errors = {}
     for key, maximum in (("name", 100), ("plan_name", 100), ("cancel_memo", 1000)):
@@ -74,8 +77,8 @@ def validate_subscription(data):
     if result["status"] == "trial":
         try:
             ending = parse_time(result["trial_ends_at"])
-            if joined is not None and ending <= joined:
-                errors["trial_ends_at"] = "入会日時より後の日時を入力してください．"
+            if joined is not None and ending < joined:
+                errors["trial_ends_at"] = "入会日時以降の日時を入力してください．"
         except ValueError:
             errors["trial_ends_at"] = "トライアル終了日時を YYYY-MM-DDTHH:MM で入力してください．"
     else:
@@ -92,13 +95,17 @@ def sort_subscriptions(items, order="frequency"):
     def key(pair):
         index, item = pair
         cancelled = item.get("status") == "cancelled"
-        registered = (item.get("registered_at") or "", index)
+        value = item.get("created_at") or item.get("registered_at")
+        try:
+            registered = (parse_time(value).timestamp() if value else float("inf"), index)
+        except (ValueError, TypeError, OSError):
+            registered = (float("inf"), index)
         if order == "frequency":
             secondary = ({"weekly": 0, "monthly": 1, "yearly": 2}.get(item.get("cycle"), 9), registered)
         elif order == "deadline":
             value = item.get("next_payment_at") or item.get("trial_ends_at")
             try:
-                time = datetime.fromisoformat(value).timestamp() if value else float("inf")
+                time = parse_time(value).timestamp() if value else float("inf")
             except (ValueError, TypeError, OSError):
                 time = float("inf")
             secondary = (time, registered)
@@ -110,11 +117,10 @@ def sort_subscriptions(items, order="frequency"):
 
 def cancellation_patch():
     """解約済みとして記録する更新内容を返す．公式手続きは利用者が行う．"""
-    return {"status": "cancelled", "next_payment_at": None, "trial_ends_at": ""}
+    return {"status": "cancelled"}
 
 
 def reactivation_patch(subscription, joined_at):
-    """再契約の入会日時を検証し，古い次回支払日を破棄する．"""
+    """再契約の入会日時を検証し，サーバが再計算するための入会日時だけを送る．"""
     data = validate_subscription({**subscription, "status": "active", "joined_at": joined_at})
-    return {"status": "active", "joined_at": data["joined_at"],
-            "trial_ends_at": "", "next_payment_at": None}
+    return {"status": "active", "joined_at": data["joined_at"]}

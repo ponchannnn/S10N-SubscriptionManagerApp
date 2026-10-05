@@ -42,7 +42,9 @@ def test_registration_search_plan_and_save(tmp_path):
         fields["1回の支払額（円） *"].value = "10000"
         await save.on_click(None)
         assert len(saved) == 1 and saved[0]["amount"] == 10000
-        assert not save.disabled and not fields["サービス名 *"].disabled
+        assert save.disabled and not fields["サービス名 *"].disabled
+        await save.on_click(None)
+        assert len(saved) == 1
     asyncio.run(scenario())
 
 
@@ -82,3 +84,62 @@ def test_preview_and_icons_construct_with_pinned_flet(tmp_path):
     assert isinstance(service_icon({**item, "status": "cancelled", "icon": "https://example.com/icon.png"}), ft.Container)
     assert preview_list(page, [item], "frequency", lambda e: None, lambda: None, lambda i: None)
     assert preview_status(page, item, ApiClient(tmp_path / "records.json"), lambda: None, lambda i: None)
+
+
+def test_api_field_error_is_shown_and_input_is_preserved():
+    from api_client import ApiError
+    class FailingApi:
+        async def create_subscription(self, data):
+            raise ApiError("入力内容に誤りがあります", status_code=422,
+                           details={"custom_name": ["名称を確認してください"]})
+    async def scenario():
+        view = register_view(PageStub(), FailingApi())
+        fields = {control.label: control for control in view.controls if isinstance(control, ft.TextField)}
+        fields["サービス名 *"].value = "試作"
+        fields["料金プラン名 *"].value = "月額"
+        fields["1回の支払額（円） *"].value = "1000"
+        save = view.controls[-1]
+        await save.on_click(None)
+        assert fields["サービス名 *"].error == "名称を確認してください"
+        assert fields["サービス名 *"].value == "試作" and not save.disabled
+    asyncio.run(scenario())
+
+
+def test_delayed_search_does_not_replace_manual_entry():
+    class DelayedApi:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.finish = asyncio.Event()
+        async def search_services(self, keyword):
+            self.started.set()
+            await self.finish.wait()
+            return [{"id": 3, "name": "古い結果"}]
+    async def scenario():
+        api = DelayedApi()
+        view = register_view(PageStub(), api)
+        search = next(c for c in view.controls if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
+        pending = asyncio.create_task(search.on_click(None))
+        await api.started.wait()
+        next(c for c in view.controls if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
+        api.finish.set()
+        await pending
+        results = next(c for c in view.controls if isinstance(c, ft.Column))
+        assert results.controls == []
+    asyncio.run(scenario())
+
+
+def test_preview_accepts_null_trial_end_and_datetime_joined(tmp_path):
+    from datetime import datetime
+    item = {"id": 42, "name": "試作", "plan_name": "月額", "amount": 1000,
+            "cycle": "monthly", "status": "active", "joined_at": datetime(2026, 10, 5, 12),
+            "trial_ends_at": None, "cancel_url": None}
+    assert preview_status(PageStub(), item, ApiClient(tmp_path / "records.json"), lambda: None, lambda i: None)
+
+
+
+def test_icon_color_stays_with_subscription_when_order_changes():
+    item = {"id": 42, "name": "試作", "status": "active"}
+    other = {"id": 50, "name": "別契約", "status": "active"}
+    initial = {value["id"]: service_icon(value).bgcolor for value in [item, other]}
+    reordered = {value["id"]: service_icon(value).bgcolor for value in [other, item]}
+    assert initial == reordered

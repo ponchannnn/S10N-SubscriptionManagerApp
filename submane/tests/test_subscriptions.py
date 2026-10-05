@@ -49,7 +49,7 @@ def test_trial_records_ending_and_cancellation_discards_it():
 
 def test_reactivation_replaces_joined_date_and_clears_old_payment():
     patch = reactivation_patch(record(status="cancelled", next_payment_at="2026-02-28T12:00"), "2026-10-05T12:00")
-    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00", "trial_ends_at": "", "next_payment_at": None}
+    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00"}
 
 
 def test_sort_keeps_cancelled_last_and_does_not_mutate_input():

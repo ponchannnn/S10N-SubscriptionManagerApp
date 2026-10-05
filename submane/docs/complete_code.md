@@ -1,6 +1,6 @@
 # 石井担当・全コード
 
-各ファイルのコードを省略せず掲載しています．
+ソース・テスト・HTMLを省略せず掲載しています．2026-10-05更新．
 
 ## pyproject.toml
 
@@ -40,6 +40,40 @@ data/
 *.log
 ```
 
+## ../.gitignore
+
+```text
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Flet / Flutter build output
+build/
+
+# Editor
+.vscode/
+.idea/
+
+# ローカル作業・テスト生成物
+.pytest_cache/
+.reference/
+.tools/
+data/
+*.log
+```
+
+## run.ps1
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath $PSScriptRoot
+& "$PSScriptRoot/.venv/Scripts/python.exe" "$PSScriptRoot/src/main.py" @args
+```
+
 ## setup.ps1
 
 ```powershell
@@ -51,18 +85,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Python 3.12をインストールするか，�
 if ($LASTEXITCODE -ne 0) { throw '依存ライブラリのインストールに失敗しました．' }
 ```
 
-## run.ps1
-
-```powershell
-$ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath $PSScriptRoot
-& "$PSScriptRoot/.venv/Scripts/python.exe" "$PSScriptRoot/src/main.py" @args
-```
-
 ## src/api_client.py
 
 ```python
-"""仮API契約を一か所にまとめ，ローカルJSON保存と切り替える．"""
+"""サーバ設計書v0.2対応の担当確認用APIと，独立したローカルデモ．"""
 import asyncio
 import copy
 import json
@@ -76,11 +102,22 @@ from urllib.parse import quote
 import httpx
 import config
 from dummy_data import SERVICES
+from logic.api_contract import registration_payload, update_payload
 from logic.subscriptions import normalize_keyword, validate_subscription
 
 
 class ApiError(RuntimeError):
     """画面に表示できる保存・通信エラー．"""
+
+    def __init__(self, message, *, status_code=None, code=None, details=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.details = details if isinstance(details, dict) else {}
+
+
+class OfflineError(ApiError):
+    """オンライン専用の登録・更新を実行できない．"""
 
 
 class ApiClient:
@@ -99,7 +136,7 @@ class ApiClient:
         if not self.base_url:
             raise ApiError("APIのURLが未設定です．")
         if self._http_session is None or self._http_session.is_closed:
-            self._http_session = httpx.AsyncClient(base_url=self.base_url + "/", timeout=15)
+            self._http_session = httpx.AsyncClient(base_url=self.base_url.rstrip("/") + "/", timeout=15)
             self._owns_session = True
         return self._http_session
 
@@ -115,11 +152,21 @@ class ApiClient:
         try:
             response = await self.http_session().request(method, path, **kwargs)
             response.raise_for_status()
-            return response.json()
+            return response.json() if response.content else None
         except httpx.HTTPStatusError as error:
             message = "ログイン状態を確認してください．" if error.response.status_code in (401, 403) else "保存・取得に失敗しました．時間をおいて再試行してください．"
-            raise ApiError(message) from error
-        except (httpx.HTTPError, ValueError) as error:
+            try:
+                body = error.response.json().get("error", {})
+            except (ValueError, AttributeError):
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            raise ApiError(body.get("message") or message,
+                           status_code=error.response.status_code,
+                           code=body.get("code"), details=body.get("details")) from error
+        except httpx.HTTPError as error:
+            raise OfflineError("通信できません．接続後に再試行してください．送信の自動再試行は行いません．") from error
+        except ValueError as error:
             raise ApiError("通信できませんでした．接続先とネットワークを確認してください．") from error
 
     def _read(self):
@@ -167,6 +214,9 @@ class ApiClient:
                     return copy.deepcopy(item)
                 validated = validate_subscription({**item, **data})
                 item.update(validated)
+                if data.get("status") in {"active", "cancelled"}:
+                    item["next_payment_at"] = None
+                    item["trial_ends_at"] = ""
                 for key in ("next_payment_at",):
                     if key in data:
                         item[key] = data[key]
@@ -177,7 +227,8 @@ class ApiClient:
         """定番サービスを検索する．ローカルの結果はコピーして返す．"""
         if not self.use_dummy:
             result = await self._request("GET", "services", params={"q": keyword})
-            if not isinstance(result, list):
+            result = result.get("services") if isinstance(result, dict) else result
+            if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
                 raise ApiError("サービス検索の応答形式が想定と異なります．")
             return result
         query = normalize_keyword(keyword)
@@ -189,7 +240,8 @@ class ApiClient:
         if self.use_dummy:
             return await asyncio.to_thread(self._local, "list")
         result = await self._request("GET", "subscriptions")
-        if not isinstance(result, list):
+        result = result.get("subscriptions") if isinstance(result, dict) else result
+        if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
             raise ApiError("一覧の応答形式が想定と異なります．")
         return result
 
@@ -204,13 +256,19 @@ class ApiClient:
         data = validate_subscription(data)
         if self.use_dummy:
             return await asyncio.to_thread(self._local, "create", data=data)
-        return await self._request("POST", "subscriptions", json=data)
+        if data["status"] == "cancelled":
+            raise ApiError("登録時は契約中またはトライアル中を選択してください．解約は詳細画面で記録します．")
+        try:
+            payload = registration_payload(data)
+        except (ValueError, TypeError) as error:
+            raise ApiError("サービスまたはプランのIDが不正です．定番サービスを再選択してください．") from error
+        return await self._request("POST", "subscriptions", json=payload)
 
     async def update_subscription(self, sub_id, data):
         """登録済みサブスクを部分更新する．"""
         if self.use_dummy:
             return await asyncio.to_thread(self._local, "update", sub_id, data)
-        return await self._request("PATCH", "subscriptions/" + quote(str(sub_id), safe=""), json=data)
+        return await self._request("PATCH", "subscriptions/" + quote(str(sub_id), safe=""), json=update_payload(data))
 ```
 
 ## src/components/__init__.py
@@ -223,15 +281,19 @@ class ApiClient:
 
 ```python
 """無料トライアルと解約済みを一貫した見た目で表示する．"""
+from zlib import crc32
 import flet as ft
 import theme
 
 
-def service_icon(subscription, size=64, color_index=0):
+def service_icon(subscription, size=64, color_index=None):
     """解約済みは画像を含めグレー表示，トライアル中は時計を添える．"""
     cancelled = subscription.get("status") == "cancelled"
+    if color_index is None:
+        identity = str(subscription.get("service_id") or subscription.get("id") or subscription.get("name") or "?")
+        color_index = crc32(identity.encode("utf-8"))
     color = theme.OFF_FILL if cancelled else theme.TILE_COLORS[color_index % len(theme.TILE_COLORS)]
-    letter = ft.Text(subscription.get("name", "?")[:1], size=26,
+    letter = ft.Text((subscription.get("name") or "?")[:1], size=26,
                      weight=ft.FontWeight.BOLD, color=theme.OFF_INK if cancelled else theme.SURFACE)
     visual = letter
     if subscription.get("icon"):
@@ -277,7 +339,7 @@ import inspect
 import flet as ft
 import theme
 from api_client import ApiError
-from logic.subscriptions import ValidationError, cancellation_patch, reactivation_patch, valid_url
+from logic.subscriptions import JST, ValidationError, cancellation_patch, reactivation_patch, valid_url
 
 
 def status_actions(page, subscription, api, on_changed):
@@ -287,19 +349,20 @@ def status_actions(page, subscription, api, on_changed):
     label = "入会サイトを開く" if cancelled else "退会サイトを開く"
     error_text = ft.Text("", color=theme.ERROR)
     new_joined = ft.TextField(label="再契約の入会日時（日本時間）",
-                             value=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+                             value=datetime.now(JST).strftime("%Y-%m-%dT%H:%M"),
                              visible=cancelled)
     confirm = ft.Checkbox(label="公式サイトで手続きを完了しました", value=False)
-    busy = {"value": False}
+    busy = {"value": False, "completed": False}
 
     async def change_status(event):
         """手続き完了確認後に保存し，成功した場合だけ一覧を更新する．"""
-        if busy["value"]:
+        if busy["value"] or busy["completed"]:
             return
         if not confirm.value:
             error_text.value = "公式サイトでの手続き完了を確認してください．"
             page.update()
             return
+        new_joined.error = None
         try:
             patch = reactivation_patch(subscription, new_joined.value) if cancelled else cancellation_patch()
         except ValidationError as error:
@@ -317,12 +380,13 @@ def status_actions(page, subscription, api, on_changed):
         except ApiError as error:
             error_text.value = str(error)
         else:
+            busy["completed"] = True
             result = on_changed(item)
             if inspect.isawaitable(result):
                 await result
         finally:
             busy["value"] = False
-            save.disabled = False
+            save.disabled = busy["completed"]
             new_joined.disabled = False
             confirm.disabled = False
             page.update()
@@ -382,11 +446,50 @@ SERVICES = [
 """石井担当の入力検証，並び替え，状態変更．"""
 ```
 
+## src/logic/api_contract.py
+
+```python
+"""サーバ設計書v0.2の登録・状態変更リクエストへの変換．"""
+from logic.subscriptions import parse_time
+
+
+def registration_payload(data):
+    """画面表示用の項目とAPIが計算する項目を送信しない．"""
+    result = {key: data[key] for key in ("plan_name", "amount", "cycle")}
+    result["joined_at"] = parse_time(data["joined_at"]).isoformat(timespec="minutes")
+    if data.get("service_id"):
+        result["service_id"] = int(data["service_id"])
+        if data.get("plan_id"):
+            result["plan_id"] = int(data["plan_id"])
+    else:
+        result.update({"custom_name": data["name"],
+                       "custom_join_url": data.get("join_url") or None,
+                       "custom_cancel_url": data.get("cancel_url") or None,
+                       "custom_cancel_memo": data.get("cancel_memo") or None})
+    if data.get("status") == "trial":
+        result["trial_ends_at"] = parse_time(data["trial_ends_at"]).isoformat(timespec="minutes")
+    return result
+
+
+def update_payload(data):
+    """状態変更時もnext_payment_atなどの読み取り専用値を除外する．"""
+    allowed = {"service_id", "plan_id", "custom_name", "custom_join_url", "custom_cancel_url",
+               "custom_cancel_memo", "plan_name", "amount", "cycle", "joined_at",
+               "trial_ends_at", "memo", "status"}
+    result = {key: value for key, value in data.items() if key in allowed}
+    for key in ("joined_at", "trial_ends_at"):
+        if result.get(key):
+            result[key] = parse_time(result[key]).isoformat(timespec="minutes")
+    return result
+```
+
 ## src/logic/subscriptions.py
 
 ```python
 """UIから独立した登録・解約・再契約の規則．"""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+JST = timezone(timedelta(hours=9))
 from urllib.parse import urlsplit
 import unicodedata
 
@@ -424,14 +527,15 @@ def valid_url(value):
 
 def parse_time(value):
     """画面とAPIで共通の分単位の日時形式を読み取る．"""
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M")
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return parsed.replace(tzinfo=JST) if parsed.tzinfo is None else parsed
 
 
 def validate_subscription(data):
     """登録内容を検証し，APIへ渡す辞書を返す．"""
     result = {key: str(data.get(key, "") or "").strip() for key in (
         "name", "plan_name", "cycle", "joined_at", "join_url", "cancel_url",
-        "cancel_memo", "status", "trial_ends_at", "icon", "service_id",
+        "cancel_memo", "status", "trial_ends_at", "icon", "service_id", "plan_id",
     )}
     errors = {}
     for key, maximum in (("name", 100), ("plan_name", 100), ("cancel_memo", 1000)):
@@ -461,8 +565,8 @@ def validate_subscription(data):
     if result["status"] == "trial":
         try:
             ending = parse_time(result["trial_ends_at"])
-            if joined is not None and ending <= joined:
-                errors["trial_ends_at"] = "入会日時より後の日時を入力してください．"
+            if joined is not None and ending < joined:
+                errors["trial_ends_at"] = "入会日時以降の日時を入力してください．"
         except ValueError:
             errors["trial_ends_at"] = "トライアル終了日時を YYYY-MM-DDTHH:MM で入力してください．"
     else:
@@ -479,13 +583,17 @@ def sort_subscriptions(items, order="frequency"):
     def key(pair):
         index, item = pair
         cancelled = item.get("status") == "cancelled"
-        registered = (item.get("registered_at") or "", index)
+        value = item.get("created_at") or item.get("registered_at")
+        try:
+            registered = (parse_time(value).timestamp() if value else float("inf"), index)
+        except (ValueError, TypeError, OSError):
+            registered = (float("inf"), index)
         if order == "frequency":
             secondary = ({"weekly": 0, "monthly": 1, "yearly": 2}.get(item.get("cycle"), 9), registered)
         elif order == "deadline":
             value = item.get("next_payment_at") or item.get("trial_ends_at")
             try:
-                time = datetime.fromisoformat(value).timestamp() if value else float("inf")
+                time = parse_time(value).timestamp() if value else float("inf")
             except (ValueError, TypeError, OSError):
                 time = float("inf")
             secondary = (time, registered)
@@ -497,14 +605,13 @@ def sort_subscriptions(items, order="frequency"):
 
 def cancellation_patch():
     """解約済みとして記録する更新内容を返す．公式手続きは利用者が行う．"""
-    return {"status": "cancelled", "next_payment_at": None, "trial_ends_at": ""}
+    return {"status": "cancelled"}
 
 
 def reactivation_patch(subscription, joined_at):
-    """再契約の入会日時を検証し，古い次回支払日を破棄する．"""
+    """再契約の入会日時を検証し，サーバが再計算するための入会日時だけを送る．"""
     data = validate_subscription({**subscription, "status": "active", "joined_at": joined_at})
-    return {"status": "active", "joined_at": data["joined_at"],
-            "trial_ends_at": "", "next_payment_at": None}
+    return {"status": "active", "joined_at": data["joined_at"]}
 ```
 
 ## src/main.py
@@ -571,7 +678,7 @@ async def main(page: ft.Page):
                 items = await api.list_subscriptions()
                 view = preview_list(page, items, state["order"], order_changed,
                                     lambda: navigate("/register"),
-                                    lambda sub_id: navigate("/status/" + quote(sub_id, safe="")),
+                                    lambda sub_id: navigate("/status/" + quote(str(sub_id), safe="")),
                                     state["notice"])
                 state["notice"] = ""
         except ApiError as error:
@@ -643,13 +750,13 @@ def preview_list(page, items, order, on_order, on_add, on_detail, notice=""):
     active = sum(item["status"] != "cancelled" for item in items)
     trial = sum(item["status"] == "trial" for item in items)
     rows = []
-    for index, item in enumerate(sort_subscriptions(items, order)):
+    for item in sort_subscriptions(items, order):
         cancelled = item["status"] == "cancelled"
         rows.append(ft.Container(
             bgcolor=theme.SURFACE, border_radius=16, padding=14,
             on_click=lambda e, sub_id=item["id"]: on_detail(sub_id),
             content=ft.Row(spacing=14, controls=[
-                service_icon(item, color_index=index),
+                service_icon(item),
                 ft.Column(expand=True, spacing=4, controls=[
                     ft.Text(item["name"], weight=ft.FontWeight.BOLD,
                             color=theme.OFF_INK if cancelled else theme.INK),
@@ -681,8 +788,8 @@ def preview_status(page, item, api, on_back, on_changed):
         ft.Text(item["name"], size=26, weight=ft.FontWeight.BOLD),
         ft.Text(STATUS_LABELS[item["status"]], color=theme.INK_SUB),
         ft.Text(f"{item['plan_name']} / {CYCLE_LABELS[item['cycle']]} / {item['amount']:,}円"),
-        ft.Text("入会日時：" + item["joined_at"]),
-        ft.Text("トライアル終了：" + item.get("trial_ends_at", ""), visible=item["status"] == "trial"),
+        ft.Text("入会日時：" + str(item.get("joined_at") or "未取得")),
+        ft.Text("トライアル終了：" + str(item.get("trial_ends_at") or "未取得"), visible=item["status"] == "trial"),
         ft.Text("退会に必要な情報", size=16, weight=ft.FontWeight.BOLD),
         ft.Text(item.get("cancel_memo") or "未登録", color=theme.INK_SUB),
         ft.Divider(color=theme.LINE), status_actions(page, item, api, on_changed),
@@ -698,7 +805,7 @@ from datetime import datetime
 import flet as ft
 import theme
 from api_client import ApiClient, ApiError
-from logic.subscriptions import CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
+from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
 def register_view(page, api=None, on_saved=None, on_back=None):
@@ -707,7 +814,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     message = ft.Text("", color=theme.ERROR)
     results = ft.Column(spacing=8)
     plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
-    selected = {"service": None, "search_version": 0, "busy": False}
+    selected = {"service": None, "search_version": 0, "busy": False, "completed": False}
     fields = {
         "name": ft.TextField(label="サービス名 *", max_length=100),
         "plan_name": ft.TextField(label="料金プラン名 *", max_length=100),
@@ -715,10 +822,10 @@ def register_view(page, api=None, on_saved=None, on_back=None):
             ft.DropdownOption(key=key, text=value) for key, value in CYCLE_LABELS.items()]),
         "amount": ft.TextField(label="1回の支払額（円） *", keyboard_type=ft.KeyboardType.NUMBER,
                                helper="無料トライアル中も，有料移行後の金額を入力してください．"),
-        "joined_at": ft.TextField(label="入会日時 *", value=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+        "joined_at": ft.TextField(label="入会日時 *", value=datetime.now(JST).strftime("%Y-%m-%dT%H:%M"),
                                   helper="日本時間・分単位の例：2026-10-05T12:30"),
         "status": ft.Dropdown(label="契約状態 *", value="active", options=[
-            ft.DropdownOption(key=key, text=value) for key, value in STATUS_LABELS.items()]),
+            ft.DropdownOption(key=key, text=value) for key, value in STATUS_LABELS.items() if key != "cancelled"]),
         "trial_ends_at": ft.TextField(label="トライアル終了日時 *", visible=False,
                                       hint_text="2026-11-05T12:30"),
         "join_url": ft.TextField(label="入会URL（任意）", hint_text="https://…"),
@@ -750,7 +857,12 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         """名称，URL，メモとプラン候補を取り込む．"""
         if selected["busy"]:
             return
+        selected["search_version"] += 1
+        selected["completed"] = False
+        save_button.disabled = False
         selected["service"] = service
+        for key in ("name", "join_url", "cancel_url", "cancel_memo"):
+            fields[key].read_only = True
         for key in ("name", "join_url", "cancel_url", "cancel_memo"):
             fields[key].value = service.get(key, "")
         plans.options = [ft.DropdownOption(key=str(index), text=plan["name"])
@@ -779,6 +891,8 @@ def register_view(page, api=None, on_saved=None, on_back=None):
             if not services:
                 results.controls = [ft.Text("該当するサービスがありません．下の欄へ手入力できます．", color=theme.INK_SUB)]
         except ApiError as error:
+            if version != selected["search_version"]:
+                return
             results.controls = [ft.Text(str(error), color=theme.ERROR),
                                 ft.Button("検索を再試行", on_click=search_services)]
         page.update()
@@ -788,7 +902,12 @@ def register_view(page, api=None, on_saved=None, on_back=None):
 
     def clear_service(event):
         """定番サービスとの関連を解除し，手入力用の空欄に戻す．"""
+        selected["search_version"] += 1
+        selected["completed"] = False
+        save_button.disabled = False
         selected["service"] = None
+        for key in ("name", "join_url", "cancel_url", "cancel_memo"):
+            fields[key].read_only = False
         for key in ("name", "plan_name", "amount", "join_url", "cancel_url", "cancel_memo"):
             fields[key].value = ""
         plans.visible = False
@@ -797,7 +916,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
 
     async def save(event):
         """入力を検証し，二重クリックによる重複登録を防ぐ．"""
-        if selected["busy"]:
+        if selected["busy"] or selected["completed"]:
             return
         for control in fields.values():
             if isinstance(control, ft.Dropdown):
@@ -808,7 +927,8 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         message.color = theme.ERROR
         service = selected["service"] or {}
         data = {key: control.value for key, control in fields.items()}
-        data.update(icon=service.get("icon", ""), service_id=service.get("id", ""))
+        plan = service.get("plans", [])[int(plans.value)] if service and plans.value is not None else {}
+        data.update(icon=service.get("icon", ""), service_id=service.get("id", ""), plan_id=plan.get("id", ""))
         try:
             data = validate_subscription(data)
         except ValidationError as error:
@@ -823,14 +943,25 @@ def register_view(page, api=None, on_saved=None, on_back=None):
             return
         selected["busy"] = True
         save_button.disabled = True
-        for control in [search, plans, manual_button, back_button, *fields.values()]:
+        for control in [search, search_button, plans, manual_button, back_button, *fields.values()]:
             control.disabled = True
         page.update()
         try:
             item = await api.create_subscription(data)
         except ApiError as error:
             message.value = str(error)
+            aliases = {"custom_name": "name", "custom_join_url": "join_url",
+                       "custom_cancel_url": "cancel_url", "custom_cancel_memo": "cancel_memo"}
+            for key, errors in error.details.items():
+                control = fields.get(aliases.get(key, key))
+                if control is not None:
+                    text = "，".join(map(str, errors)) if isinstance(errors, list) else str(errors)
+                    if isinstance(control, ft.Dropdown):
+                        control.error_text = text
+                    else:
+                        control.error = text
         else:
+            selected["completed"] = True
             if on_saved:
                 result = on_saved(item)
                 if asyncio.iscoroutine(result):
@@ -840,8 +971,8 @@ def register_view(page, api=None, on_saved=None, on_back=None):
                 message.value = "登録しました．"
         finally:
             selected["busy"] = False
-            save_button.disabled = False
-            for control in [search, plans, manual_button, back_button, *fields.values()]:
+            save_button.disabled = selected["completed"]
+            for control in [search, search_button, plans, manual_button, back_button, *fields.values()]:
                 control.disabled = False
             page.update()
 
@@ -849,12 +980,129 @@ def register_view(page, api=None, on_saved=None, on_back=None):
                             color=theme.SURFACE, height=48, on_click=save)
     manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
     back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
+    search_button = ft.Button("定番サービスを表示・検索", height=44, on_click=search_services)
     return ft.Column(spacing=16, controls=[
         back_button, ft.Text("サブスクを追加", size=26, weight=ft.FontWeight.BOLD, color=theme.INK),
-        ft.Text("サービスを選ぶか，契約内容を手入力してください．", color=theme.INK_SUB),
-        search, ft.Button("定番サービスを表示・検索", height=44, on_click=search_services), results,
+        ft.Text("サービスを選ぶか，契約内容を手入力してください．定番の名称・URL・退会案内を変更する場合は手入力に切り替えてください．", color=theme.INK_SUB),
+        search, search_button, results,
         manual_button, plans, *fields.values(), message, save_button,
     ])
+```
+
+## tests/test_api_contract.py
+
+```python
+"""設計書v0.2のサーバ応答・送信内容と通信断を外部通信なしで検証する．"""
+import asyncio
+import json
+from datetime import datetime, timezone
+import httpx
+import pytest
+from api_client import ApiClient, ApiError, OfflineError
+from logic.subscriptions import cancellation_patch, reactivation_patch, sort_subscriptions
+
+
+def draft(**changes):
+    return {"name": "手入力", "plan_name": "月額", "amount": 1000, "cycle": "monthly",
+            "joined_at": "2026-10-05T12:30", "status": "active", **changes}
+
+
+def test_wrapped_services_and_subscriptions_keep_server_fields():
+    async def scenario():
+        record = {"id": 42, "next_payment_at": "2026-11-05T12:30+09:00", "created_at": "2026-10-05T12:30+09:00"}
+        def handler(request):
+            if request.url.path.endswith("services"):
+                assert request.url.params["q"] == "動画"
+                return httpx.Response(200, json={"services": [{"id": 3, "plans": [{"id": 30}]}]})
+            return httpx.Response(200, json={"subscriptions": [record], "server_time": "2026-10-05T12:30+09:00"})
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            assert (await api.search_services("動画"))[0]["plans"][0]["id"] == 30
+            assert await api.list_subscriptions() == [record]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("standard", [True, False])
+def test_registration_sends_ids_or_custom_fields_and_japanese_time(standard):
+    async def scenario():
+        def handler(request):
+            assert request.method == "POST" and request.url.path == "/api/v1/subscriptions"
+            payload = json.loads(request.content)
+            assert payload["joined_at"] == "2026-10-05T12:30+09:00"
+            assert payload["trial_ends_at"] == "2026-10-10T12:30+09:00"
+            assert not {"status", "name", "icon", "next_payment_at"} & payload.keys()
+            if standard:
+                assert payload["service_id"] == 3 and payload["plan_id"] == 30
+                assert "custom_name" not in payload
+            else:
+                assert payload["custom_name"] == "手入力"
+                assert payload["custom_cancel_url"] == "https://example.com/cancel"
+                assert "service_id" not in payload
+            return httpx.Response(201, json={"id": 42, "status": "trial", **payload})
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            data = draft(status="trial", trial_ends_at="2026-10-10T12:30", cancel_url="https://example.com/cancel")
+            if standard:
+                data.update(service_id=3, plan_id=30)
+            assert (await api.create_subscription(data))["id"] == 42
+    asyncio.run(scenario())
+
+
+def test_cancel_and_reactivate_accept_server_dates_without_sending_computed_fields():
+    async def scenario():
+        seen = []
+        def handler(request):
+            seen.append(json.loads(request.content))
+            assert request.method == "PATCH" and request.url.path == "/api/v1/subscriptions/42"
+            return httpx.Response(200, json={"id": 42, "next_payment_at": "2026-11-05T12:30+09:00", **seen[-1]})
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            await api.update_subscription(42, cancellation_patch())
+            result = await api.update_subscription(42, reactivation_patch(draft(joined_at="2026-01-01T12:30+09:00", status="cancelled"), "2026-10-05T12:30"))
+            assert seen == [{"status": "cancelled"}, {"status": "active", "joined_at": "2026-10-05T12:30+09:00"}]
+            assert result["next_payment_at"] == "2026-11-05T12:30+09:00"
+    asyncio.run(scenario())
+
+
+def test_validation_error_retains_field_details():
+    async def scenario():
+        body = {"error": {"code": "validation_error", "message": "入力内容に誤りがあります", "details": {"amount": ["金額を確認してください"]}}}
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(lambda request: httpx.Response(422, json=body))) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            with pytest.raises(ApiError) as error:
+                await api.create_subscription(draft())
+            assert error.value.status_code == 422
+            assert error.value.code == "validation_error"
+            assert error.value.details == body["error"]["details"]
+    asyncio.run(scenario())
+
+
+def test_offline_registration_does_not_retry_or_write_dummy_storage(tmp_path):
+    async def scenario():
+        calls = []
+        def handler(request):
+            calls.append(request)
+            raise httpx.ConnectError("offline", request=request)
+        file = tmp_path / "must-not-exist.json"
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(file, use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            with pytest.raises(OfflineError):
+                await api.create_subscription(draft())
+            assert len(calls) == 1 and not file.exists()
+    asyncio.run(scenario())
+
+
+def test_registration_order_uses_created_at_and_datetime_objects():
+    records = [{"id": "later", "created_at": "2026-10-05T12:30+09:00"},
+               {"id": "earlier", "created_at": datetime(2026, 10, 5, 2, tzinfo=timezone.utc)},
+               {"id": "cancelled", "status": "cancelled", "created_at": "2026-01-01T00:00"}]
+    assert [item["id"] for item in sort_subscriptions(records, "registered")] == ["earlier", "later", "cancelled"]
+
+
+def test_deadline_order_compares_naive_japanese_time_and_utc():
+    records = [{"id": "later", "next_payment_at": "2026-10-05T04:00+00:00"},
+               {"id": "earlier", "next_payment_at": "2026-10-05T12:30"}]
+    assert [item["id"] for item in sort_subscriptions(records, "deadline")] == ["earlier", "later"]
 ```
 
 ## tests/test_api_session.py
@@ -997,7 +1245,7 @@ def test_trial_records_ending_and_cancellation_discards_it():
 
 def test_reactivation_replaces_joined_date_and_clears_old_payment():
     patch = reactivation_patch(record(status="cancelled", next_payment_at="2026-02-28T12:00"), "2026-10-05T12:00")
-    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00", "trial_ends_at": "", "next_payment_at": None}
+    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00"}
 
 
 def test_sort_keeps_cancelled_last_and_does_not_mutate_input():
@@ -1066,7 +1314,9 @@ def test_registration_search_plan_and_save(tmp_path):
         fields["1回の支払額（円） *"].value = "10000"
         await save.on_click(None)
         assert len(saved) == 1 and saved[0]["amount"] == 10000
-        assert not save.disabled and not fields["サービス名 *"].disabled
+        assert save.disabled and not fields["サービス名 *"].disabled
+        await save.on_click(None)
+        assert len(saved) == 1
     asyncio.run(scenario())
 
 
@@ -1106,6 +1356,65 @@ def test_preview_and_icons_construct_with_pinned_flet(tmp_path):
     assert isinstance(service_icon({**item, "status": "cancelled", "icon": "https://example.com/icon.png"}), ft.Container)
     assert preview_list(page, [item], "frequency", lambda e: None, lambda: None, lambda i: None)
     assert preview_status(page, item, ApiClient(tmp_path / "records.json"), lambda: None, lambda i: None)
+
+
+def test_api_field_error_is_shown_and_input_is_preserved():
+    from api_client import ApiError
+    class FailingApi:
+        async def create_subscription(self, data):
+            raise ApiError("入力内容に誤りがあります", status_code=422,
+                           details={"custom_name": ["名称を確認してください"]})
+    async def scenario():
+        view = register_view(PageStub(), FailingApi())
+        fields = {control.label: control for control in view.controls if isinstance(control, ft.TextField)}
+        fields["サービス名 *"].value = "試作"
+        fields["料金プラン名 *"].value = "月額"
+        fields["1回の支払額（円） *"].value = "1000"
+        save = view.controls[-1]
+        await save.on_click(None)
+        assert fields["サービス名 *"].error == "名称を確認してください"
+        assert fields["サービス名 *"].value == "試作" and not save.disabled
+    asyncio.run(scenario())
+
+
+def test_delayed_search_does_not_replace_manual_entry():
+    class DelayedApi:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.finish = asyncio.Event()
+        async def search_services(self, keyword):
+            self.started.set()
+            await self.finish.wait()
+            return [{"id": 3, "name": "古い結果"}]
+    async def scenario():
+        api = DelayedApi()
+        view = register_view(PageStub(), api)
+        search = next(c for c in view.controls if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
+        pending = asyncio.create_task(search.on_click(None))
+        await api.started.wait()
+        next(c for c in view.controls if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
+        api.finish.set()
+        await pending
+        results = next(c for c in view.controls if isinstance(c, ft.Column))
+        assert results.controls == []
+    asyncio.run(scenario())
+
+
+def test_preview_accepts_null_trial_end_and_datetime_joined(tmp_path):
+    from datetime import datetime
+    item = {"id": 42, "name": "試作", "plan_name": "月額", "amount": 1000,
+            "cycle": "monthly", "status": "active", "joined_at": datetime(2026, 10, 5, 12),
+            "trial_ends_at": None, "cancel_url": None}
+    assert preview_status(PageStub(), item, ApiClient(tmp_path / "records.json"), lambda: None, lambda i: None)
+
+
+
+def test_icon_color_stays_with_subscription_when_order_changes():
+    item = {"id": 42, "name": "試作", "status": "active"}
+    other = {"id": 50, "name": "別契約", "status": "active"}
+    initial = {value["id"]: service_icon(value).bgcolor for value in [item, other]}
+    reordered = {value["id"]: service_icon(value).bgcolor for value in [other, item]}
+    assert initial == reordered
 ```
 
 ## docs/register.html
@@ -1393,32 +1702,4 @@ if (typeof document !== 'undefined') initialize();
 </script>
 </body>
 </html>
-
-```
-
-## repository/.gitignore
-
-```text
-# macOS
-.DS_Store
-
-# Python
-__pycache__/
-*.pyc
-.venv/
-
-# Flet / Flutter build output
-build/
-
-# Editor
-.vscode/
-.idea/
-
-# ローカル作業・テスト生成物
-.pytest_cache/
-.reference/
-.tools/
-data/
-*.log
-
 ```

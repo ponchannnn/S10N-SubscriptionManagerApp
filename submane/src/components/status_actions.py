@@ -4,7 +4,7 @@ import inspect
 import flet as ft
 import theme
 from api_client import ApiError
-from logic.subscriptions import ValidationError, cancellation_patch, reactivation_patch, valid_url
+from logic.subscriptions import JST, ValidationError, cancellation_patch, reactivation_patch, valid_url
 
 
 def status_actions(page, subscription, api, on_changed):
@@ -14,19 +14,20 @@ def status_actions(page, subscription, api, on_changed):
     label = "入会サイトを開く" if cancelled else "退会サイトを開く"
     error_text = ft.Text("", color=theme.ERROR)
     new_joined = ft.TextField(label="再契約の入会日時（日本時間）",
-                             value=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+                             value=datetime.now(JST).strftime("%Y-%m-%dT%H:%M"),
                              visible=cancelled)
     confirm = ft.Checkbox(label="公式サイトで手続きを完了しました", value=False)
-    busy = {"value": False}
+    busy = {"value": False, "completed": False}
 
     async def change_status(event):
         """手続き完了確認後に保存し，成功した場合だけ一覧を更新する．"""
-        if busy["value"]:
+        if busy["value"] or busy["completed"]:
             return
         if not confirm.value:
             error_text.value = "公式サイトでの手続き完了を確認してください．"
             page.update()
             return
+        new_joined.error = None
         try:
             patch = reactivation_patch(subscription, new_joined.value) if cancelled else cancellation_patch()
         except ValidationError as error:
@@ -44,12 +45,13 @@ def status_actions(page, subscription, api, on_changed):
         except ApiError as error:
             error_text.value = str(error)
         else:
+            busy["completed"] = True
             result = on_changed(item)
             if inspect.isawaitable(result):
                 await result
         finally:
             busy["value"] = False
-            save.disabled = False
+            save.disabled = busy["completed"]
             new_joined.disabled = False
             confirm.disabled = False
             page.update()

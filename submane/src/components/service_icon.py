@@ -1,13 +1,17 @@
 """無料トライアルと解約済みを一貫した見た目で表示する．"""
+from zlib import crc32
 import flet as ft
 import theme
 
 
-def service_icon(subscription, size=64, color_index=0):
+def service_icon(subscription, size=64, color_index=None):
     """解約済みは画像を含めグレー表示，トライアル中は時計を添える．"""
     cancelled = subscription.get("status") == "cancelled"
+    if color_index is None:
+        identity = str(subscription.get("service_id") or subscription.get("id") or subscription.get("name") or "?")
+        color_index = crc32(identity.encode("utf-8"))
     color = theme.OFF_FILL if cancelled else theme.TILE_COLORS[color_index % len(theme.TILE_COLORS)]
-    letter = ft.Text(subscription.get("name", "?")[:1], size=26,
+    letter = ft.Text((subscription.get("name") or "?")[:1], size=26,
                      weight=ft.FontWeight.BOLD, color=theme.OFF_INK if cancelled else theme.SURFACE)
     visual = letter
     if subscription.get("icon"):

@@ -1,4 +1,4 @@
-"""仮API契約を一か所にまとめ，ローカルJSON保存と切り替える．"""
+"""サーバ設計書v0.2対応の担当確認用APIと，独立したローカルデモ．"""
 import asyncio
 import copy
 import json
@@ -12,11 +12,22 @@ from urllib.parse import quote
 import httpx
 import config
 from dummy_data import SERVICES
+from logic.api_contract import registration_payload, update_payload
 from logic.subscriptions import normalize_keyword, validate_subscription
 
 
 class ApiError(RuntimeError):
     """画面に表示できる保存・通信エラー．"""
+
+    def __init__(self, message, *, status_code=None, code=None, details=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.details = details if isinstance(details, dict) else {}
+
+
+class OfflineError(ApiError):
+    """オンライン専用の登録・更新を実行できない．"""
 
 
 class ApiClient:
@@ -35,7 +46,7 @@ class ApiClient:
         if not self.base_url:
             raise ApiError("APIのURLが未設定です．")
         if self._http_session is None or self._http_session.is_closed:
-            self._http_session = httpx.AsyncClient(base_url=self.base_url + "/", timeout=15)
+            self._http_session = httpx.AsyncClient(base_url=self.base_url.rstrip("/") + "/", timeout=15)
             self._owns_session = True
         return self._http_session
 
@@ -51,11 +62,21 @@ class ApiClient:
         try:
             response = await self.http_session().request(method, path, **kwargs)
             response.raise_for_status()
-            return response.json()
+            return response.json() if response.content else None
         except httpx.HTTPStatusError as error:
             message = "ログイン状態を確認してください．" if error.response.status_code in (401, 403) else "保存・取得に失敗しました．時間をおいて再試行してください．"
-            raise ApiError(message) from error
-        except (httpx.HTTPError, ValueError) as error:
+            try:
+                body = error.response.json().get("error", {})
+            except (ValueError, AttributeError):
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            raise ApiError(body.get("message") or message,
+                           status_code=error.response.status_code,
+                           code=body.get("code"), details=body.get("details")) from error
+        except httpx.HTTPError as error:
+            raise OfflineError("通信できません．接続後に再試行してください．送信の自動再試行は行いません．") from error
+        except ValueError as error:
             raise ApiError("通信できませんでした．接続先とネットワークを確認してください．") from error
 
     def _read(self):
@@ -103,6 +124,9 @@ class ApiClient:
                     return copy.deepcopy(item)
                 validated = validate_subscription({**item, **data})
                 item.update(validated)
+                if data.get("status") in {"active", "cancelled"}:
+                    item["next_payment_at"] = None
+                    item["trial_ends_at"] = ""
                 for key in ("next_payment_at",):
                     if key in data:
                         item[key] = data[key]
@@ -113,7 +137,8 @@ class ApiClient:
         """定番サービスを検索する．ローカルの結果はコピーして返す．"""
         if not self.use_dummy:
             result = await self._request("GET", "services", params={"q": keyword})
-            if not isinstance(result, list):
+            result = result.get("services") if isinstance(result, dict) else result
+            if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
                 raise ApiError("サービス検索の応答形式が想定と異なります．")
             return result
         query = normalize_keyword(keyword)
@@ -125,7 +150,8 @@ class ApiClient:
         if self.use_dummy:
             return await asyncio.to_thread(self._local, "list")
         result = await self._request("GET", "subscriptions")
-        if not isinstance(result, list):
+        result = result.get("subscriptions") if isinstance(result, dict) else result
+        if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
             raise ApiError("一覧の応答形式が想定と異なります．")
         return result
 
@@ -140,10 +166,16 @@ class ApiClient:
         data = validate_subscription(data)
         if self.use_dummy:
             return await asyncio.to_thread(self._local, "create", data=data)
-        return await self._request("POST", "subscriptions", json=data)
+        if data["status"] == "cancelled":
+            raise ApiError("登録時は契約中またはトライアル中を選択してください．解約は詳細画面で記録します．")
+        try:
+            payload = registration_payload(data)
+        except (ValueError, TypeError) as error:
+            raise ApiError("サービスまたはプランのIDが不正です．定番サービスを再選択してください．") from error
+        return await self._request("POST", "subscriptions", json=payload)
 
     async def update_subscription(self, sub_id, data):
         """登録済みサブスクを部分更新する．"""
         if self.use_dummy:
             return await asyncio.to_thread(self._local, "update", sub_id, data)
-        return await self._request("PATCH", "subscriptions/" + quote(str(sub_id), safe=""), json=data)
+        return await self._request("PATCH", "subscriptions/" + quote(str(sub_id), safe=""), json=update_payload(data))

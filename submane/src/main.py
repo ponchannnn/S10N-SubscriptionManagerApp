@@ -59,7 +59,7 @@ async def main(page: ft.Page):
                 items = await api.list_subscriptions()
                 view = preview_list(page, items, state["order"], order_changed,
                                     lambda: navigate("/register"),
-                                    lambda sub_id: navigate("/status/" + quote(sub_id, safe="")),
+                                    lambda sub_id: navigate("/status/" + quote(str(sub_id), safe="")),
                                     state["notice"])
                 state["notice"] = ""
         except ApiError as error:

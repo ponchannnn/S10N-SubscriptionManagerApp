@@ -1,114 +1,78 @@
-# 石井担当：設計とチームの共通コードへの統合
+# 石井担当：実装状況と結合メモ
 
-更新README2.mdとスクラム文書のプロジェクト計画ver.2（9/28）を参照しています．旧計画では担当が異なるため，ver.2を優先します．登録画面は10/5〜10/12，名称検索・定番サービス選択は10/13〜10/18，解約・再契約とグレーアウトは10/19〜10/24，並び替えは10/25〜10/28が計画期間です．
+2026-10-05更新．ブランチは `ishii`．スクラム文書のプロジェクト計画ver.2（9/28）を優先し，README，`Common.md`，`client_db.md`，`mane_server/server_db_api.md`（v0.2），他担当ブランチを確認しました．資料の担当・設計は開発上の参照情報として扱っています．APIサーバはユーザ確認によりまだ未完成です．
 
-## そのまま移せる担当コード
+## 石井が担当する機能
 
-| ファイル | 内容 |
-|---|---|
-| src/views/register.py | サブスク登録画面 |
-| src/logic/subscriptions.py | 入力検証・状態変更・並び替え |
-| src/components/status_actions.py | 詳細画面に追加する解約・再契約の操作 |
-| src/components/sort_selector.py | ホームなどの並び順選択 |
-| src/components/service_icon.py | グレーアウトと時計の表示，共通部品担当と統合 |
-| tests/ | 担当ロジックの検証 |
-
-main.py，views/preview.pyは動作確認用です．チームのmain.py，home.py，detail.pyを置き換える必要はありません．theme.py，config.py，api_client.py，dummy_data.pyは共通コードが未完成の間に使う仮実装です．正式な共通コードができたら，必要なインターフェースを担当者と合わせてください．
-
-## 登録画面
-
-register_viewはpageだけを渡しても生成できます．共通APIと保存後の遷移を渡す例です．
-
-```python
-from views.register import register_view
-
-content = register_view(
-    page,
-    api=api,
-    on_saved=lambda item: page.navigate('/'),
-    on_back=lambda: page.navigate('/'),
-)
-```
-
-共通APIにはasyncメソッド `search_services(keyword)` と `create_subscription(data)` が必要です．保存後のon_savedは同期・asyncのいずれも使用できます．
-
-## ホームの並び替えとアイコン
-
-```python
-from logic.subscriptions import sort_subscriptions
-from components.service_icon import service_icon
-
-ordered = sort_subscriptions(subscriptions, 'frequency')
-icons = [service_icon(item, color_index=index) for index, item in enumerate(ordered)]
-```
-
-orderはfrequency，registered，deadlineです．登録順はregistered_atを優先し，ない場合はAPIから受け取った順序を維持します．どの順序でも解約済みを末尾にします．期限順はnext_payment_at，トライアルで未取得ならtrial_ends_atを使用します．通常契約で日時がない場合は他の契約中データの後ろに置きます．この部品は次回支払日を計算しません．
-
-## 詳細の状態変更
-
-```python
-from components.status_actions import status_actions
-
-controls = status_actions(page, subscription, api, on_changed=refresh_detail)
-```
-
-共通APIにはasyncメソッド `update_subscription(id, patch)` が必要です．on_changedには保存後の辞書を渡します．成功後にホーム・期限・内訳を再取得してください．公式URLを開いただけでは状態は変えません．再契約では入会日時を更新してnext_payment_atをNoneにします．API側は更新後の新しい日付を返す仕様にしてください．
-
-## 仮API契約
-
-正式な仕様ではありません．接続先・認証・フィールド名・応答構造をAPI担当と確認してから利用してください．
-
-| メソッド | パス（仮） | 応答（仮） |
+| 担当 | 計画期間 | 現在の状況 |
 |---|---|---|
-| GET | services?q=名称 | サービス辞書の配列 |
-| GET | subscriptions | サブスク辞書の配列 |
-| GET | subscriptions/{id} | サブスク辞書 |
-| POST | subscriptions | 作成後のサブスク辞書 |
-| PATCH | subscriptions/{id} | 更新後のサブスク辞書 |
+| サブスク登録画面 | 10/5〜10/12 | Fletの定番選択・手入力・入力検証・保存を実装 |
+| 名称検索・定番サービスとプラン選択 | 10/13〜10/18 | 検索，自動入力，サービス・プランID引き継ぎ，古い検索応答の破棄を実装 |
+| 解約／再契約，解約済みグレーアウト | 10/19〜10/24 | 公式手続き完了確認，状態変更部品，アイコン表示を実装 |
+| 更新頻度順・解約済み末尾 | 10/25〜10/28 | 更新頻度順・登録順を実装．期限順はAPI計算済み日時を利用 |
+| 結合・不具合修正 | 10/29〜11/1以降，全員 | 模擬APIで担当機能のテストを実装．共通画面と実APIへの結合は残作業 |
 
-サービス辞書はid，name，icon（任意），join_url，cancel_url，cancel_memo，plansを持ち，plansはname，cycle，amountの辞書配列です．サブスクの必須項目はREADME2.mdに合わせてname，plan_name，cycle，amount，joined_at，statusです．追加項目はservice_id（任意），trial_ends_at，registered_atです．joined_atとtrial_ends_atは日本時間の `YYYY-MM-DDTHH:MM`，next_payment_atとregistered_atはISO 8601を想定しています．画面にパスワードそのものは持ちません．
+プロダクトロードマップの作成・更新にも石井の記載があります．既存のver.2を参照し，今回の進捗はこのメモに記録しています．PowerPointのロードマップを更新する際は，残存する2025年表記と現行計画の年をチームで確認してください．発表資料・デモ動画は全員の作業として残ります．
 
-```powershell
-$env:SUBMANE_USE_DUMMY_DATA = 'false'
-$env:SUBMANE_API_BASE_URL = 'https://API担当から指定されたURL'
-.\.venv\Scripts\python.exe .\src\main.py
-```
+## 担当コード
 
-URLやCookieをソースに直接書かず，ログイン担当と同一のhttpx.AsyncClientを共有してください．ApiClientは通信のたびにセッションを作り直さず，サーバのSet-Cookieを保持して後続リクエストに送信します．AuthorizationのBearerトークンは使用しません．ログイン担当が先に作成したAsyncClientはApiClient(http_session=client)として渡せます．ApiClientが生成したセッションでログインする場合はapi.http_session()を使用します．ログインAPIのパス・CSRF対策・セッション期限は正式仕様を待ちます．ブラウザのCookieをhttpxが自動共有するわけではありません．共有対象はアプリ内のHTTPセッションです．
+| ファイル | 用途 |
+|---|---|
+| src/views/register.py | 登録画面．APIと保存後の遷移を注入可能 |
+| src/logic/subscriptions.py | 入力検証，状態変更パッチ，並び替え |
+| src/logic/api_contract.py | サーバv0.2の登録・更新項目への変換 |
+| src/components/status_actions.py | 詳細に組み込む解約・再契約操作 |
+| src/components/sort_selector.py | ホームなどに組み込む並び順選択 |
+| src/components/service_icon.py | 解約済みグレーアウト，トライアル時計，安定した頭文字アイコン色 |
+| tests/ | ロジック，保存，画面イベント，模擬APIの結合テスト |
 
-仮APIはPOST失敗を自動で再送しません．正式APIで通信断時の重複登録を防ぐ場合は，API担当と冪等キーの仕様を決める必要があります．不要になったApiClientはawait api.aclose()で終了します．外部から渡したセッションは呼び出し元が終了します．
+`main.py` と `views/preview.py` は担当機能の単独確認用です．チーム共通のmain，ホーム，詳細を置き換えず，担当部品を組み込みます．`api_client.py` は担当確認用でサーバv0.2へ対応しましたが，チームのログイン・SQLiteキャッシュは実装していません．JSON保存はダミーモードだけです．実APIモードで失敗してもJSONへ保存せず，自動再送・オフライン登録は行いません．
 
-## 担当外の機能
+## API仕様への対応
 
-会員登録・ログイン，次回支払日計算，円グラフと金額集計，期限画面，Androidのビルド設定完成，複数端末同期は該当担当者との統合が必要です．この実装で変更が必要なのは，ホームで並び替えとアイコン部品を使う箇所，詳細でstatus_actionsを表示する箇所，mainで登録画面へ遷移する箇所です．
+接続先は `SUBMANE_API_BASE_URL=https://指定されたホスト/api/v1` のように，`/api/v1`まで含めて指定します．サービス検索は `{ "services": [...] }`，一覧は `{ "subscriptions": [...], "server_time": ... }` を読み取ります．単独確認用クライアントは旧形式の配列も読み取れます．
 
-2026-10-05にユーザ確認済み：正式なDB・API仕様のMarkdownは未完成です．石井担当には日付計算を追加せず，担当者の計算結果を受け取ります．READMEの計算場所の食い違いはこの方針で扱います．
+- 定番登録：整数の `service_id` と，候補にIDがある場合の `plan_id` を送ります．プラン名・金額・周期の手修正も送ります．名称・入退会URL・退会案内はサービスマスタを使用するため読み取り専用です．変更する場合は手入力へ切り替えます．
+- 手入力登録：`custom_name`，`custom_join_url`，`custom_cancel_url`，`custom_cancel_memo` を送ります．
+- 入会日時・トライアル終了日時：タイムゾーンがない入力を日本時間として扱い，送信時は `+09:00` を付けます．APIのオフセット付き日時やdatetime値も並び替えで扱えます．
+- 登録時の状態：契約中／トライアル中を選択します．POSTにstatusは送らず，トライアルの場合だけtrial_ends_atを送ります．解約は登録後の詳細操作で記録します．
+- 解約：`{"status": "cancelled"}` をPATCHします．再契約：`status=active` と新しい `joined_at` をPATCHします．次回支払日はサーバの応答を使用し，クライアントで計算しません．
+- HTTP 422：`error.message` と `error.details` を受け取り，該当する入力欄へエラーを表示します．401はログイン確認のエラーとして扱います．
+- Cookie：ログイン担当と同じhttpx.AsyncClientを注入します．外部から注入したセッションの終了は呼び出し元が担当します．ブラウザのCookieは自動共有されません．Cookie永続化と401時のキャッシュ破棄は共通層に統合する作業です．
 
-## 更新READMEの確認結果
+登録順はサーバの `created_at`，旧デモの `registered_at` を使い，日時がないものは元の順序を保って後ろへ置きます．どの並び順でも解約済みを末尾にします．期限順は取得済みnext_payment_atまたはtrial_ends_atで比較し，未取得の契約は後ろへ置きます．
 
-前版と比べ，HTTPS公開，Cookie／Session認証，担当者別のdocs/メモ，トライアル終了を次回支払日とすること，年額計上方式を選択可能とすること，手動での解約済み切り替え，APIからのアイコン取得，利用継続判断の見送りが追記されています．石井担当の割当は変わっていません．
+## 共通コードとの相違点・残作業
 
-スクラム文書では旧計画とver.2が同居しています．最新のver.2を優先しており，プロダクトロードマップの作成日欄には2025年表記の残存があります．資料を修正する場合は計画の内容を基準に年を確認してください．また，HTTPS公開の欄はチェック済みですが，具体的なAPI URLはまだ掲載されていません．
+`origin/tamatsukuri`には共通コードとホームが存在し，Flet 1.0.3とhttpx 0.28.1は一致しています．ただし，APIは同期モジュール関数で，パスが `/api/...` の仮仕様，更新がPUT，トライアル項目が `trial_end_at` となっています．サーバv0.2は `/api/v1/...`，PATCH，`trial_ends_at`です．これらを共通層で合わせてから結合してください．他担当ブランチは今回変更していません．
 
-## 検証記録
+`register_view(page, api=api, on_saved=callback, on_back=callback)` と `status_actions(page, subscription, api, on_changed=callback)` に注入するAPIは，asyncの `search_services`，`create_subscription`，`update_subscription` を持つ必要があります．同期関数を使用する場合は，共通層側で `asyncio.to_thread` 等のasyncラッパーを用意し，共通ApiErrorをこの画面のApiErrorへ変換してください．コールバックは同期・asyncの両方を使えます．
 
-Python 3.14.4，Flet 1.0.3で自動テスト32件が成功しました．登録画面のイベントから検索・定番選択・プラン変更・入力エラー・保存まで，状態変更の完了確認・解約・再契約，Cookieの持ち回り，HTTPエラー，JSON保存を検証しています．Web起動のHTTP 200とフォント配信も確認しました．ブラウザ接続がないため画面の目視確認は未実施で，Python 3.12，Android実機，正式APIでの検証も残っています．
+登録・状態変更の成功後は，共通APIで一覧・詳細・期限・内訳のキャッシュを刷新してください．ローカルDBは `client_db.md` の方針に合わせて共通担当・池田担当と接続します．石井のコードで次回支払日や支払い見込みを計算しません．
 
+ホームでは `sort_subscriptions(items, order)` と `sort_selector` を組み込み，詳細では `status_actions` を組み込みます．アイコンは共通部品と統合してください．小湊ブランチの `src/`，西内ブランチの `submane-flet/` と，共通の `submane/src/` では配置が異なるため，統合先ディレクトリをそろえる作業も残ります．
 
-## HTML版の登録画面
+### 結合時の受け入れ確認
 
-docs/register.htmlをブラウザで開くと，名称検索・デモサービスとプラン選択・手入力・入力検証・登録を確認できます．HTML版はブラウザのlocalStorageへ保存し，Flet版のJSONやホームの見本とは同期しません．JSONエクスポートも可能です．正式API接続は未実装です．
+- [x] 定番・手入力の登録リクエスト，ラッパー付き一覧，PATCH状態変更を模擬APIで検証．
+- [x] Cookie持ち回り，入力エラー，通信断時の非保存・自動再送なしを検証．
+- [x] 入力検証，JSON再読込，二重クリック，古い検索応答，null・日時値，並び替えを検証．
+- [ ] 玉造の共通API・ルート・ホームへ登録／並び替えを組み込む．
+- [ ] 小湊の詳細へ解約・再契約操作を組み込む．
+- [ ] 西内のログインと同一セッションで登録・更新を実APIに対して確認する．
+- [ ] APIの401でログイン画面へ遷移し，Cookie・ユーザキャッシュが消えることを確認する．
+- [ ] 操作成功後にホーム・期限・内訳が更新されることを確認する．
+- [ ] Python 3.12，Android実機，複数端末，画面の目視で確認する．
+- [ ] チームの結合テスト結果をロードマップ・発表資料・デモ動画へ反映する．
 
+## 検証環境と起動
 
-## Git保存時点の補足
-
-ブランチはfeature/ishii-subscription-registrationです．チームリポジトリのsubmane/配下へ，登録画面・状態変更部品・並び替え・HTML版・テストを保存しています．共通コードは単独確認用の仮実装です．既存のCommon.md，client_db.md，home_mock.html，mane_server/server_db_api.mdは変更していません．
-
-リポジトリにはDB・API設計書が追加されています．現状のAPIクライアントは前段で作成した仮契約であり，正式なAPIのラッパー付き応答，custom_*の入力項目，plan_id，タイムゾーン付き日時との統合が必要です．既定のダミーモードで確認してください．
-
-このcloneでの実行例：
+Python 3.14.4，Flet 1.0.3．自動テスト44件が成功しています．外部サーバを使わずhttpx.MockTransportで仕様上の通信を検証しました．実API・Python 3.12・Android実機・今回の画面目視は未検証です．
 
 ```powershell
 cd 'C:/Users/Yuto/ICTⅡ/S10N-SubscriptionManagerApp/submane'
 & 'C:/Users/Yuto/ICTⅡ/.venv/Scripts/python.exe' ./src/main.py --web
+& 'C:/Users/Yuto/ICTⅡ/.venv/Scripts/python.exe' -m pytest -q
 ```
+
+`docs/register.html` は独立した登録デモです．localStorageへ保存し，FletのJSONや正式APIとは同期しません．今回のAPI対応はFlet版に反映しています．全ソース・テスト・HTMLは `docs/complete_code.md` に省略せず掲載しています．

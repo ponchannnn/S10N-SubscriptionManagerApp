@@ -12,13 +12,13 @@ def preview_list(page, items, order, on_order, on_add, on_detail, notice=""):
     active = sum(item["status"] != "cancelled" for item in items)
     trial = sum(item["status"] == "trial" for item in items)
     rows = []
-    for index, item in enumerate(sort_subscriptions(items, order)):
+    for item in sort_subscriptions(items, order):
         cancelled = item["status"] == "cancelled"
         rows.append(ft.Container(
             bgcolor=theme.SURFACE, border_radius=16, padding=14,
             on_click=lambda e, sub_id=item["id"]: on_detail(sub_id),
             content=ft.Row(spacing=14, controls=[
-                service_icon(item, color_index=index),
+                service_icon(item),
                 ft.Column(expand=True, spacing=4, controls=[
                     ft.Text(item["name"], weight=ft.FontWeight.BOLD,
                             color=theme.OFF_INK if cancelled else theme.INK),
@@ -50,8 +50,8 @@ def preview_status(page, item, api, on_back, on_changed):
         ft.Text(item["name"], size=26, weight=ft.FontWeight.BOLD),
         ft.Text(STATUS_LABELS[item["status"]], color=theme.INK_SUB),
         ft.Text(f"{item['plan_name']} / {CYCLE_LABELS[item['cycle']]} / {item['amount']:,}円"),
-        ft.Text("入会日時：" + item["joined_at"]),
-        ft.Text("トライアル終了：" + item.get("trial_ends_at", ""), visible=item["status"] == "trial"),
+        ft.Text("入会日時：" + str(item.get("joined_at") or "未取得")),
+        ft.Text("トライアル終了：" + str(item.get("trial_ends_at") or "未取得"), visible=item["status"] == "trial"),
         ft.Text("退会に必要な情報", size=16, weight=ft.FontWeight.BOLD),
         ft.Text(item.get("cancel_memo") or "未登録", color=theme.INK_SUB),
         ft.Divider(color=theme.LINE), status_actions(page, item, api, on_changed),
