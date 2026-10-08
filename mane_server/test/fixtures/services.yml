@@ -1,0 +1,2 @@
+# このアプリのテストはfixturesに頼らず、各テストの中で明示的にレコードを作る方針にしている
+# (自動生成されたfixtureは一意制約やcycleのinclusion validationに違反していたため)。

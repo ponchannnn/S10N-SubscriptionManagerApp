@@ -1,0 +1,255 @@
+# 定番サービスのマスタ(doc §7.7)。
+#
+# 金額・URL・退会に必要な情報はすべて動作確認用の仮の値で、実際のサービスの現行情報ではない
+# (submane/src/dummy_data.py と同じ内容にしてあるので、ダミーデータから本物のAPIに切り替えた
+# ときに見た目が変わらず比較しやすい)。
+# プラン・金額・URL等の実調査はマスタ担当が行い、調べた日を url_checked_on に入れる。今はまだ未調査。
+
+- slug: netflix
+  name: Netflix
+  name_kana: ネットフリックス
+  category: video
+  icon_path: /icons/netflix.png
+  color: "#E50914"
+  join_url: https://example.com/netflix/join
+  cancel_url: https://example.com/netflix/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1500, cycle: monthly }
+
+- slug: spotify
+  name: Spotify
+  name_kana: スポティファイ
+  category: music
+  icon_path: /icons/spotify.png
+  color: "#1DB954"
+  join_url: https://example.com/spotify/join
+  cancel_url: https://example.com/spotify/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1000, cycle: monthly }
+
+- slug: audible
+  name: Audible
+  name_kana: オーディブル
+  category: book
+  icon_path: /icons/audible.png
+  color: "#FF9900"
+  join_url: https://example.com/audible/join
+  cancel_url: https://example.com/audible/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1500, cycle: monthly }
+
+- slug: unext
+  name: U-NEXT
+  name_kana: ユーネクスト
+  category: video
+  icon_path: /icons/unext.png
+  color: "#000000"
+  join_url: https://example.com/unext/join
+  cancel_url: https://example.com/unext/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: true
+  default_trial_days: 31
+  plans:
+    - { name: 月額プラン, amount: 2200, cycle: monthly }
+
+- slug: amazon-prime
+  name: Amazonプライム
+  name_kana: アマゾンプライム
+  category: shopping
+  icon_path: /icons/amazon-prime.png
+  color: "#00A8E1"
+  join_url: https://example.com/amazon-prime/join
+  cancel_url: https://example.com/amazon-prime/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 年額プラン, amount: 6000, cycle: yearly }
+
+- slug: youtube-premium
+  name: YouTube Premium
+  name_kana: ユーチューブプレミアム
+  category: video
+  icon_path: /icons/youtube-premium.png
+  color: "#FF0000"
+  join_url: https://example.com/youtube-premium/join
+  cancel_url: https://example.com/youtube-premium/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1300, cycle: monthly }
+
+- slug: disney-plus
+  name: "Disney+"
+  name_kana: ディズニープラス
+  category: video
+  icon_path: /icons/disney-plus.png
+  color: "#113CCF"
+  join_url: https://example.com/disney-plus/join
+  cancel_url: https://example.com/disney-plus/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1100, cycle: monthly }
+
+- slug: fod-premium
+  name: FODプレミアム
+  name_kana: エフオーディープレミアム
+  category: video
+  icon_path: /icons/fod-premium.png
+  color: "#FF8A00"
+  join_url: https://example.com/fod-premium/join
+  cancel_url: https://example.com/fod-premium/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1000, cycle: monthly }
+
+- slug: dazn
+  name: DAZN
+  name_kana: ダゾーン
+  category: video
+  icon_path: /icons/dazn.png
+  color: "#F8FF13"
+  join_url: https://example.com/dazn/join
+  cancel_url: https://example.com/dazn/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 4200, cycle: monthly }
+
+- slug: apple-music
+  name: Apple Music
+  name_kana: アップルミュージック
+  category: music
+  icon_path: /icons/apple-music.png
+  color: "#FA243C"
+  join_url: https://example.com/apple-music/join
+  cancel_url: https://example.com/apple-music/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1100, cycle: monthly }
+
+- slug: adobe-cc
+  name: Adobe CC
+  name_kana: アドビシーシー
+  category: tool
+  icon_path: /icons/adobe-cc.png
+  color: "#DA1F26"
+  join_url: https://example.com/adobe-cc/join
+  cancel_url: https://example.com/adobe-cc/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 年額プラン, amount: 86000, cycle: yearly }
+
+- slug: hulu
+  name: Hulu
+  name_kana: フール
+  category: video
+  icon_path: /icons/hulu.png
+  color: "#1CE783"
+  join_url: https://example.com/hulu/join
+  cancel_url: https://example.com/hulu/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1000, cycle: monthly }
+
+- slug: kindle-unlimited
+  name: Kindle Unlimited
+  name_kana: キンドルアンリミテッド
+  category: book
+  icon_path: /icons/kindle-unlimited.png
+  color: "#FF9900"
+  join_url: https://example.com/kindle-unlimited/join
+  cancel_url: https://example.com/kindle-unlimited/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: true
+  default_trial_days: 30
+  plans:
+    - { name: 月額プラン, amount: 1000, cycle: monthly }
+
+- slug: lemino
+  name: Lemino
+  name_kana: レミノ
+  category: video
+  icon_path: /icons/lemino.png
+  color: "#6D4AFF"
+  join_url: https://example.com/lemino/join
+  cancel_url: https://example.com/lemino/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1000, cycle: monthly }
+
+- slug: abema-premium
+  name: ABEMAプレミアム
+  name_kana: アベマプレミアム
+  category: video
+  icon_path: /icons/abema-premium.png
+  color: "#00D4C4"
+  join_url: https://example.com/abema-premium/join
+  cancel_url: https://example.com/abema-premium/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1100, cycle: monthly }
+
+- slug: icloud-plus
+  name: iCloud+
+  name_kana: アイクラウドプラス
+  category: cloud
+  icon_path: /icons/icloud-plus.png
+  color: "#3693F3"
+  join_url: https://example.com/icloud-plus/join
+  cancel_url: https://example.com/icloud-plus/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 200GB, amount: 400, cycle: monthly }
+
+- slug: d-anime-store
+  name: dアニメストア
+  name_kana: ディーアニメストア
+  category: video
+  icon_path: /icons/d-anime-store.png
+  color: "#FF3366"
+  join_url: https://example.com/d-anime-store/join
+  cancel_url: https://example.com/d-anime-store/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 600, cycle: monthly }
+
+- slug: nhk-on-demand
+  name: NHKオンデマンド
+  name_kana: エヌエイチケイオンデマンド
+  category: video
+  icon_path: /icons/nhk-on-demand.png
+  color: "#E60012"
+  join_url: https://example.com/nhk-on-demand/join
+  cancel_url: https://example.com/nhk-on-demand/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: 月額プラン, amount: 1000, cycle: monthly }
+
+- slug: chatgpt
+  name: ChatGPT
+  name_kana: チャットジーピーティー
+  category: ai
+  icon_path: /icons/chatgpt.png
+  color: "#74AA9C"
+  join_url: https://example.com/chatgpt/join
+  cancel_url: https://example.com/chatgpt/cancel
+  cancel_memo: 退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。
+  has_free_trial: false
+  plans:
+    - { name: Plus プラン, amount: 3000, cycle: monthly }
