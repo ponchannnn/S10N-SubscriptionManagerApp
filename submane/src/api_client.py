@@ -30,15 +30,16 @@ class OfflineError(ApiError):
 
 
 # ------------------------------------------------------------------
-# APIのパス(仮)。API担当の仕様書(docs/)が確定したらここを合わせる
+# APIのパス。mane_server/server_db_api.md §6 に合わせている
 # ------------------------------------------------------------------
 ENDPOINTS = {
-    "sign_up": "/api/auth/register",
-    "log_in": "/api/auth/login",
-    "log_out": "/api/auth/logout",
-    "subscriptions": "/api/subscriptions",
-    "subscription": "/api/subscriptions/{sub_id}",
-    "services": "/api/services",
+    "sign_up": "/api/v1/signup",
+    "log_in": "/api/v1/session",
+    "log_out": "/api/v1/session",
+    "me": "/api/v1/me",
+    "subscriptions": "/api/v1/subscriptions",
+    "subscription": "/api/v1/subscriptions/{sub_id}",
+    "services": "/api/v1/services",
 }
 
 # ------------------------------------------------------------------
@@ -90,7 +91,7 @@ def _request(method: str, path: str, **kwargs):
     if response.status_code == 404:
         raise ApiError("データが見つかりません。")
     if response.status_code >= 400:
-        raise ApiError(f"サーバでエラーが起きました(コード {response.status_code})。")
+        raise ApiError(_error_message(response))
     if not response.content:
         return None
     try:
@@ -99,8 +100,22 @@ def _request(method: str, path: str, **kwargs):
         raise ApiError("サーバから想定外の応答が返りました。") from err
 
 
+def _error_message(response: httpx.Response) -> str:
+    """{"error": {"message": ...}} の形(mane_server/server_db_api.md §5)ならその文言を使う。"""
+    try:
+        error = response.json().get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+    except ValueError:
+        message = None
+    return message or f"サーバでエラーが起きました(コード {response.status_code})。"
+
+
 def _to_app_subscription(data: dict) -> dict:
-    """APIのサブスク1件を、アプリ内で使う形にそろえる。"""
+    """APIのサブスク1件を、アプリ内で使う形にそろえる。
+
+    APIの項目名は trial_ends_at(s あり。mane_server/server_db_api.md §6.4)だが、
+    アプリ内では trial_end_at(s なし)で統一している。
+    """
     return {
         "id": data.get("id"),
         "name": data.get("name", ""),
@@ -113,13 +128,33 @@ def _to_app_subscription(data: dict) -> dict:
         "cancel_url": data.get("cancel_url", ""),
         "cancel_memo": data.get("cancel_memo", ""),
         "status": data.get("status", "active"),
-        "trial_end_at": data.get("trial_end_at"),
+        "trial_end_at": data.get("trial_ends_at"),
     }
 
 
 def _to_api_subscription(data: dict) -> dict:
-    """アプリ内のサブスク1件を、APIへ送る形にする(今は同じ項目名)。"""
-    return dict(data)
+    """アプリ内のサブスク1件(フラットな形)を、APIが要求する形にする。
+
+    APIは「定番サービス参照(service_id)」と「カスタム入力(custom_name 等)」を
+    別の項目として持つが、アプリ内では区別せず1つの辞書にフラットに持っている。
+    data に無いキーは省く(PATCHでその項目に触れない、という意味になる)。
+    """
+    result = {}
+    for key in ("amount", "cycle", "plan_name", "joined_at", "status"):
+        if key in data:
+            result[key] = data[key]
+    if "trial_end_at" in data:
+        result["trial_ends_at"] = data["trial_end_at"] or None
+    if "service_id" in data:
+        service_id = data["service_id"]
+        if service_id:
+            result["service_id"] = service_id
+        else:
+            result["custom_name"] = data.get("name", "")
+            result["custom_join_url"] = data.get("join_url", "")
+            result["custom_cancel_url"] = data.get("cancel_url", "")
+            result["custom_cancel_memo"] = data.get("cancel_memo", "")
+    return result
 
 
 def _find_dummy(sub_id) -> dict:
@@ -164,7 +199,7 @@ def log_out() -> None:
     """ログアウトする。端末に残した前回のデータも消す。"""
     global _logged_in
     if not config.USE_DUMMY_DATA:
-        _request("POST", ENDPOINTS["log_out"])
+        _request("DELETE", ENDPOINTS["log_out"])
     _logged_in = False
     local_db.clear_user_data()
 
@@ -177,7 +212,8 @@ def list_subscriptions() -> list[dict]:
     if config.USE_DUMMY_DATA:
         return copy.deepcopy(_dummy_subs)
     try:
-        items = [_to_app_subscription(item) for item in _request("GET", ENDPOINTS["subscriptions"]) or []]
+        response = _request("GET", ENDPOINTS["subscriptions"]) or {}
+        items = [_to_app_subscription(item) for item in response.get("subscriptions", [])]
     except OfflineError:
         cached = local_db.load_subscriptions()
         if not cached:
@@ -221,7 +257,7 @@ def update_subscription(sub_id, data: dict) -> dict:
         sub.update({key: value for key, value in data.items() if key != "id"})
         return copy.deepcopy(sub)
     path = ENDPOINTS["subscription"].format(sub_id=sub_id)
-    item = _to_app_subscription(_request("PUT", path, json=_to_api_subscription(data)))
+    item = _to_app_subscription(_request("PATCH", path, json=_to_api_subscription(data)))
     local_db.upsert_subscription(item)
     return item
 
@@ -243,7 +279,7 @@ def refresh_services() -> None:
     if config.USE_DUMMY_DATA:
         return
     try:
-        services = _request("GET", ENDPOINTS["services"]) or []
+        services = (_request("GET", ENDPOINTS["services"]) or {}).get("services", [])
     except OfflineError:
         return
     local_db.replace_services(services)
@@ -255,7 +291,7 @@ def search_services(keyword: str) -> list[dict]:
         word = (keyword or "").strip().lower()
         return [copy.deepcopy(s) for s in dummy_data.SERVICES if word in s["name"].lower()]
     try:
-        return _request("GET", ENDPOINTS["services"], params={"q": keyword}) or []
+        return (_request("GET", ENDPOINTS["services"], params={"q": keyword}) or {}).get("services", [])
     except OfflineError:
         return local_db.search_services(keyword or "")
 
