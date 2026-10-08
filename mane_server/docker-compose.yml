@@ -26,7 +26,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgres://submane:submane@db:5432/submane_api_development
+      DATABASE_HOST: db
+      DATABASE_USERNAME: submane
+      DATABASE_PASSWORD: submane
       RAILS_ENV: development
     depends_on:
       db:
