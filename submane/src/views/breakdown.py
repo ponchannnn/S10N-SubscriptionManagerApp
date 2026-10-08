@@ -18,7 +18,6 @@ from logic import payments
 
 MAX_SECTIONS = 6          # 円グラフで個別に出す件数。残りは「その他」にまとめる
 OTHERS_COLOR = theme.OFF_INK
-_MODE_KEY = "breakdown.yearly_mode"
 _MODE_LABELS = {
     payments.MODE_BILLING: "年額は更新月に計上",
     payments.MODE_AVERAGE: "年額を月割り",
@@ -122,7 +121,7 @@ def breakdown_view(page: ft.Page) -> ft.Control:
     state = {
         "year": now.year,
         "month": now.month,
-        "mode": page.session.store.get(_MODE_KEY) or payments.MODE_BILLING,
+        "mode": api_client.get_yearly_mode(),
     }
     body = ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
@@ -222,7 +221,7 @@ def breakdown_view(page: ft.Page) -> ft.Control:
         if not selected:
             return
         state["mode"] = selected[0]
-        page.session.store.set(_MODE_KEY, state["mode"])  # アプリを閉じるまで選択を覚えておく
+        api_client.set_yearly_mode(state["mode"])  # 端末に保存し、次回起動後も覚えておく
         render()
         page.update()
 
