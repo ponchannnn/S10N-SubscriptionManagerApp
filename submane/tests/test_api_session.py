@@ -12,10 +12,10 @@ def test_cookie_session_is_shared_across_requests(monkeypatch):
 
     def handler(request):
         seen.append(request)
-        if request.url.path == "/api/auth/login":
+        if request.url.path == "/api/v1/session":
             return httpx.Response(200, json={"ok": True},
                                    headers={"set-cookie": "session=test; Path=/; HttpOnly; Secure"})
-        return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"services": [], "subscriptions": []})
 
     monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
     monkeypatch.setattr(api_client, "_client", httpx.Client(
