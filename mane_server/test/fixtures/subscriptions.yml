@@ -1,0 +1,33 @@
+# Read about fixtures at https://api.rubyonrails.org/classes/ActiveRecord/FixtureSet.html
+
+one:
+  user: one
+  service: one
+  service_plan: one
+  custom_name: MyString
+  custom_join_url: MyString
+  custom_cancel_url: MyString
+  custom_cancel_memo: MyText
+  plan_name: MyString
+  amount: 1
+  cycle: MyString
+  joined_at: 2026-10-08 16:45:15
+  trial_ends_at: 2026-10-08 16:45:15
+  cancelled_at: 2026-10-08 16:45:15
+  memo: MyText
+
+two:
+  user: two
+  service: two
+  service_plan: two
+  custom_name: MyString
+  custom_join_url: MyString
+  custom_cancel_url: MyString
+  custom_cancel_memo: MyText
+  plan_name: MyString
+  amount: 1
+  cycle: MyString
+  joined_at: 2026-10-08 16:45:15
+  trial_ends_at: 2026-10-08 16:45:15
+  cancelled_at: 2026-10-08 16:45:15
+  memo: MyText
