@@ -1,0 +1,11 @@
+ja:
+  activerecord:
+    errors:
+      messages:
+        blank: "を入力してください"
+        taken: "は既に使用されています"
+        invalid: "は不正な値です"
+        too_short: "は%{count}文字以上で入力してください"
+        too_long: "は%{count}文字以内で入力してください"
+        not_a_number: "は数値で入力してください"
+        inclusion: "は一覧にありません"
