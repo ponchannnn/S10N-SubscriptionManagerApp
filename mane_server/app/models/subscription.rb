@@ -37,7 +37,9 @@ class Subscription < ApplicationRecord
   end
 
   def plan_belongs_to_service
-    return if service_plan.nil?
-    errors.add(:plan_id, "はこのサービスのプランではありません") if service_plan.service_id != service_id
+    return if service_plan_id.blank?
+    if service_plan.nil? || service_plan.service_id != service_id
+      errors.add(:plan_id, "はこのサービスのプランではありません")
+    end
   end
 end

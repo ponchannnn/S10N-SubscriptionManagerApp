@@ -4,6 +4,9 @@ Rails.application.routes.draw do
       post   "signup", to: "registrations#create"
       resource :session, only: %i[create destroy]
       get    "me", to: "users#show"
+      resources :services,      only: %i[index]
+      resources :subscriptions, only: %i[index show create update destroy]
+      get    "summary", to: "summaries#show"
     end
   end
 
