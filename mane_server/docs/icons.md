@@ -8,7 +8,6 @@
 
 | ファイル名 | サービス名 |
 |---|---|
-| `netflix.png` | Netflix |
 | `spotify.png` | Spotify |
 | `audible.png` | Audible |
 | `unext.png` | U-NEXT |
