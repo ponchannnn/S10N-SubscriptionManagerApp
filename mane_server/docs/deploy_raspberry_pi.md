@@ -158,6 +158,11 @@ cloudflared tunnel create submane-api
 `Tunnel credentials written to /home/<ユーザー名>/.cloudflared/<TUNNEL_ID>.json`
 のように出力される`TUNNEL_ID`を控えておく。
 
+> **ホスト名は登録ドメインの直下(1階層)にすること。** Cloudflareの無料のUniversal SSL証明書は
+> `*.ドメイン.com`と`ドメイン.com`までの1階層ワイルドカードしかカバーしない。`api.foo.ドメイン.com`
+> のように2階層下にすると証明書が無く`SSL alert handshake failure`でTLSが繋がらない(HTTPの80番は
+> 繋がるので気付きにくい)。2階層以上にしたい場合はAdvanced Certificate Manager(有料)が必要。
+
 ### 5.4 設定ファイルを作る
 
 ```yaml
