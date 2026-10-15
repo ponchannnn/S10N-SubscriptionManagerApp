@@ -14,7 +14,7 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
     """pageのみでも生成でき，一覧側から保存・戻る時の挙動を注入できる．"""
 
     def default_saved(item):
-        page.open(ft.SnackBar(ft.Text(item["name"] + "を保存しました．")))
+        page.show_dialog(ft.SnackBar(ft.Text(item["name"] + "を保存しました．")))
         navigation.go_back(page)
 
     on_back = on_back or (lambda: navigation.go_back(page))

@@ -33,22 +33,22 @@ def detail_view(page: ft.Page) -> ft.Control:
     def open_delete_dialog(event):
         def confirm_delete(event):
             api_client.delete_subscription(sub_id)
-            page.close(dialog)
-            page.open(ft.SnackBar(ft.Text("削除しました．")))
+            page.pop_dialog()
+            page.show_dialog(ft.SnackBar(ft.Text("削除しました．")))
             navigation.go_back(page)
 
         dialog = ft.AlertDialog(
             title=ft.Text("サブスクの削除"),
             content=ft.Text(f"「{item.get('name')}」を一覧から削除してもよろしいですか．"),
             actions=[
-                ft.TextButton("キャンセル", on_click=lambda e: page.close(dialog)),
+                ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog()),
                 ft.TextButton("削除", on_click=confirm_delete),
             ],
         )
-        page.open(dialog)
+        page.show_dialog(dialog)
 
     def status_changed(updated: dict):
-        page.open(ft.SnackBar(ft.Text("契約状態を更新しました．")))
+        page.show_dialog(ft.SnackBar(ft.Text("契約状態を更新しました．")))
         navigation.reload(page)
 
     return ft.Column(
