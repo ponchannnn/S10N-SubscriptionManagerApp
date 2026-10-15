@@ -7,10 +7,8 @@ services:
       POSTGRES_DB: submane_api_development
     volumes:
       - db_data:/var/lib/postgresql/data
-    ports:
-      # ホスト側は5433(5432は他プロジェクトのコンテナが使用中のため)。
-      # コンテナ間の通信は内部ネットワーク経由でdb:5432を使うので影響しない。
-      - "5433:5432"
+    # ホストへのポート公開はローカル開発専用(docker-compose.override.yml側)。
+    # 本番はコンテナ間通信(db:5432)のみで、ホストには公開しない。
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U submane"]
       interval: 5s
