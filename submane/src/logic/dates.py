@@ -9,18 +9,28 @@
 """
 
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 CYCLE_MONTHS = {"monthly": 1, "yearly": 12}
 
+# このモジュールの内部では、日時は常に「オフセット無し・日本時間」で統一する
+# (datetime.now() もオフセット無しなので、比較できるようにそろえる必要がある)。
+# 本物のAPIは "+09:00" 付きで返す(mane_server/server_db_api.md §5)ので、
+# 受け取った時点で日本時間に変換しオフセットを外す。ダミーデータはもともとオフセット無し。
+JST = timezone(timedelta(hours=9))
+
 
 def parse_datetime(value) -> datetime | None:
-    """ "2026-09-20T21:00" のような文字列を datetime にする。空なら None。"""
+    """ "2026-09-20T21:00" のような文字列を datetime にする。空なら None。
+
+    オフセット付きの値(本物のAPI)は日本時間に変換してからオフセットを外す。
+    """
     if not value:
         return None
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(value)
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(JST).replace(tzinfo=None)
+    return parsed
 
 
 def add_months(base: datetime, months: int) -> datetime:
