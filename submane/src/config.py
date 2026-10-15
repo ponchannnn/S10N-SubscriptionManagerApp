@@ -1,7 +1,7 @@
 """アプリ全体の設定。APIのURLなどはここだけで管理する。"""
 
 # True の間はAPIを呼ばず、dummy_data.py の内容で動く
-USE_DUMMY_DATA = True
+USE_DUMMY_DATA = False
 
 # APIができたら設定する(末尾の / は付けない)
 API_BASE_URL = "https://<APIのURL>"
