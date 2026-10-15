@@ -15,9 +15,12 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Gemfileだけ先にコピーしてbundle installをキャッシュさせる
+# Gemfile/Gemfile.lockだけ先にコピーしてbundle installをキャッシュさせる
 # (`rails new` 実行後は本来のGemfile/Gemfile.lockに置き換わり、再度このレイヤーが走る)
-COPY Gemfile ./
+# Gemfile.lockを含めずにbundle installすると、ロックファイルと異なるバージョンのgemが
+# インストールされ、後からCOPY . .でロックファイルが入った際にバージョン不一致で
+# 実行時エラーになるため、両方コピーしてからbundle installする。
+COPY Gemfile Gemfile.lock ./
 RUN bundle install
 
 COPY . .
