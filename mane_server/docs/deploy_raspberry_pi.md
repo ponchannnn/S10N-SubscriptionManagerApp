@@ -41,6 +41,15 @@ Raspberry Pi 5はARM64なので、Pi上で直接`docker compose build`すれば�
    ```
    一度ログアウトして入り直す(`exit`してSSHし直す)。`docker compose version`が通ればOK。
 
+   `docker compose version`が`unknown command`になる場合、`docker compose`(v2・プラグイン形式)ではなく
+   古い`docker-compose`(v1・apt版、ハイフン付き)しか入っていない。以下でv2プラグインを入れる。
+   ```bash
+   sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+   docker compose version   # 通ればOK
+   ```
+   以降の手順はすべて`docker compose`(ハイフン無し)で統一している。`docker-compose`(v1)は
+   BuildKitで作ったイメージのrecreate時に`KeyError: 'ContainerConfig'`で落ちる既知の不具合があるため使わない。
+
 ---
 
 ## 2. アプリをPiに持ってくる
@@ -70,6 +79,10 @@ scp mane_server/config/master.key <ユーザー名>@<PiのIPアドレス>:~/S10N
 
 開発用の`docker-compose.yml`に重ねて使う、本番用の差分ファイル。Pi上で新規作成する。
 
+`docker-compose.yml`本体はDBのポートをホストに公開しない構成になっている(ローカル開発での
+5433公開は`docker-compose.override.yml`側に分離済み。`-f`を明示指定する本番ではこのoverrideは
+読み込まれないため、`docker-compose.prod.yml`側で`ports`について何も書く必要はない)。
+
 ```yaml
 # mane_server/docker-compose.prod.yml (Pi上にだけ置く。gitには入れない)
 services:
@@ -78,7 +91,6 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: ここに強いパスワードを決めて書く
       POSTGRES_DB: app_production
-    ports: []   # 本番ではホストにDBのポートを公開しない
 
   web:
     environment:
