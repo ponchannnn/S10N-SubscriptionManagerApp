@@ -85,6 +85,10 @@ def _request(method: str, path: str, **kwargs):
     except httpx.HTTPError as err:
         raise OfflineError("サーバに接続できません。通信環境を確認してください。") from err
     if response.status_code == 401:
+        if path == ENDPOINTS["log_in"] and method == "POST":
+            # ログイン試行そのものの401は「session切れ」ではなくメール・パスワード不一致。
+            # サーバのメッセージ(doc §6.1)をそのまま使う。
+            raise ApiError(_error_message(response))
         _logged_in = False
         local_db.clear_user_data()
         raise ApiError("ログインの有効期限が切れました。もう一度ログインしてください。")
@@ -182,6 +186,9 @@ def sign_up(email: str, password: str) -> None:
         _request("POST", ENDPOINTS["sign_up"], json={"email": email, "password": password})
         _save_session(email)
         refresh_services()
+    else:
+        # 本物のAPIが無くてもメールアドレスは保存する(アカウント画面の表示用)。
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
@@ -192,6 +199,8 @@ def log_in(email: str, password: str) -> None:
         _request("POST", ENDPOINTS["log_in"], json={"email": email, "password": password})
         _save_session(email)
         refresh_services()
+    else:
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
@@ -321,3 +330,11 @@ def set_yearly_mode(mode: str) -> None:
 def last_updated() -> str | None:
     """前回 list_subscriptions() でサーバから取得できた時刻(ISO文字列)。取得したことがなければ None。"""
     return local_db.get_state("subscriptions_fetched_at")
+
+
+def get_user_email() -> str | None:
+    """ログイン中のメールアドレスを返す(会員登録・ログインの直後に保存したもの)。
+
+    ダミーデータのまま(signup/log_in を呼んでいない)場合は None。
+    """
+    return local_db.get_state("user_email")
