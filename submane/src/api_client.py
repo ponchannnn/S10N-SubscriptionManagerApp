@@ -186,6 +186,9 @@ def sign_up(email: str, password: str) -> None:
         _request("POST", ENDPOINTS["sign_up"], json={"email": email, "password": password})
         _save_session(email)
         refresh_services()
+    else:
+        # 本物のAPIが無くてもメールアドレスは保存する(アカウント画面の表示用)。
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
@@ -196,6 +199,8 @@ def log_in(email: str, password: str) -> None:
         _request("POST", ENDPOINTS["log_in"], json={"email": email, "password": password})
         _save_session(email)
         refresh_services()
+    else:
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
