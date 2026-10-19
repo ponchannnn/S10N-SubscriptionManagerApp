@@ -39,9 +39,8 @@ cd submane
 python3 -m venv .venv
 source .venv/bin/activate        # Windows は .venv\Scripts\activate
 
-# pyproject.toml の dependencies / dependency-groups.dev と同じバージョンを入れる
-pip install flet==1.0.3 flet-charts==1.0.3 httpx==0.28.1 \
-            flet-cli==1.0.3 flet-desktop==1.0.3 flet-web==1.0.3 pytest
+# pyproject.toml と同じバージョンをまとめて入れる(バージョンを上げたときはrequirements.txtも直すこと)
+pip install -r requirements.txt
 ```
 
 Python 3.12以上であれば動作します(3.14でも動作確認済み)。
@@ -90,6 +89,7 @@ APKのビルドには Flutter SDK、Android SDK、JDK が必要で、準備に�
 submane/
 ├── README.md
 ├── pyproject.toml          # アプリ名、依存ライブラリ、ビルド設定
+├── requirements.txt        # pip install -r 用。pyproject.tomlと同じバージョンを並べたもの
 ├── src/
 │   ├── main.py             # 起動、画面の切り替え
 │   ├── config.py           # APIのURL、ダミーデータの切り替え

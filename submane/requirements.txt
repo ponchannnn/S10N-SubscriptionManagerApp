@@ -1,0 +1,14 @@
+# pip install -r requirements.txt で一括インストールできるようにしたもの。
+# 内容は pyproject.toml の dependencies / dependency-groups.dev と同じバージョンにそろえている。
+# バージョンを上げるときは pyproject.toml と両方を同時に直すこと(README 9章)。
+
+# --- アプリ本体(APKに入るもの) ---
+flet==1.0.4
+flet-charts==1.0.4   # 内訳画面の円グラフ
+httpx==0.28.1        # APIの呼び出し
+
+# --- 開発・テスト用(APKには入らない) ---
+flet-cli==1.0.4
+flet-desktop==1.0.4
+flet-web==1.0.4
+pytest==9.1.1
