@@ -1,4 +1,5 @@
 """詳細画面に組み込む解約・再契約の状態変更部品．"""
+import asyncio
 from datetime import datetime
 import flet as ft
 import theme
@@ -18,7 +19,7 @@ def status_actions(page, subscription, api, on_changed):
     confirm = ft.Checkbox(label="公式サイトで手続きを完了しました", value=False)
     busy = {"value": False}
 
-    def change_status(event):
+    async def change_status(event):
         """手続き完了確認後に保存し，成功した場合だけ一覧を更新する．"""
         if busy["value"]:
             return
@@ -34,12 +35,15 @@ def status_actions(page, subscription, api, on_changed):
             return
         busy["value"] = True
         save.disabled = True
+        save.content = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=8, controls=[
+            ft.ProgressRing(width=16, height=16, color=theme.SURFACE), ft.Text("更新しています…"),
+        ])
         new_joined.disabled = True
         confirm.disabled = True
         error_text.value = ""
         page.update()
         try:
-            item = api.update_subscription(subscription["id"], patch)
+            item = await asyncio.to_thread(api.update_subscription, subscription["id"], patch)
         except ApiError as error:
             error_text.value = str(error)
         else:
@@ -47,6 +51,7 @@ def status_actions(page, subscription, api, on_changed):
         finally:
             busy["value"] = False
             save.disabled = False
+            save.content = "再契約済みとして記録" if cancelled else "解約済みとして記録"
             new_joined.disabled = False
             confirm.disabled = False
             page.update()

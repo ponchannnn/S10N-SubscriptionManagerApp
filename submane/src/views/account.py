@@ -4,6 +4,8 @@
 未ログインなら新規登録・ログインを切り替えられるフォームを返す。
 """
 
+import asyncio
+
 import flet as ft
 
 import api_client
@@ -24,16 +26,20 @@ def _signed_in_view(page: ft.Page) -> ft.Control:
     """ログイン済みのときの中身。"""
     email = api_client.get_user_email() or "ダミーデータでログイン中"
 
-    def log_out(event):
-        api_client.log_out()
+    async def log_out(event):
+        log_out_button.disabled = True
+        log_out_button.content = ft.ProgressRing(width=16, height=16)
+        page.update()
+        await asyncio.to_thread(api_client.log_out)
         navigation.reload(page)
 
+    log_out_button = ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN)
     return ft.Column(
         spacing=16,
         controls=[
             theme.text("ログイン中", size=26, weight="bold"),
             theme.text(email, size=14, color=theme.INK_SUB),
-            ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN),
+            log_out_button,
         ],
     )
 
@@ -66,7 +72,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
 
     toggle_button.on_click = toggle_mode
 
-    def submit(event):
+    async def submit(event):
         if state["busy"]:
             return
         email_field.error = None
@@ -84,13 +90,15 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
 
         state["busy"] = True
         submit_button.disabled = True
+        is_signup = state["mode"] == "signup"
+        submit_button.content = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=8, controls=[
+            ft.ProgressRing(width=16, height=16, color=theme.ON_ACCENT), ft.Text("送信しています…"),
+        ])
         toggle_button.disabled = True
         page.update()
         try:
-            if state["mode"] == "signup":
-                api_client.sign_up(email_field.value.strip(), password_field.value)
-            else:
-                api_client.log_in(email_field.value.strip(), password_field.value)
+            action = api_client.sign_up if is_signup else api_client.log_in
+            await asyncio.to_thread(action, email_field.value.strip(), password_field.value)
         except ApiError as error:
             message.value = str(error)
         else:
@@ -99,6 +107,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
         finally:
             state["busy"] = False
             submit_button.disabled = False
+            submit_button.content = "新規登録" if is_signup else "ログイン"
             toggle_button.disabled = False
             page.update()
 

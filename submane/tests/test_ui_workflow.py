@@ -1,4 +1,6 @@
 """Fletコントロールの生成と，画面イベントから保存までの流れを確認する．"""
+import asyncio
+
 import flet as ft
 
 import api_client
@@ -13,6 +15,13 @@ class PageStub:
         """描画通信は行わない．"""
 
 
+def click(control, event=None):
+    """on_click が async def のときはその場で実行し終わるまで待つ(同期のときはそのまま呼ぶ)。"""
+    result = control.on_click(event)
+    if asyncio.iscoroutine(result):
+        asyncio.run(result)
+
+
 def test_registration_search_plan_and_save():
     page = PageStub()
     saved = []
@@ -20,7 +29,7 @@ def test_registration_search_plan_and_save():
     fields = {control.label: control for control in view.controls if isinstance(control, (ft.TextField, ft.Dropdown))}
     search_button = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
     fields["定番サービスを名称で検索"].value = "動画サービス"
-    search_button.on_click(None)
+    click(search_button)
     results = next(control for control in view.controls if isinstance(control, ft.Column))
     results.controls[0].on_click(None)
     assert fields["サービス名 *"].value == "動画サービス（デモ）"
@@ -30,10 +39,10 @@ def test_registration_search_plan_and_save():
     assert fields["更新周期 *"].value == "yearly"
     save = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "この内容で登録する")
     fields["1回の支払額（円） *"].value = "-1"
-    save.on_click(None)
+    click(save)
     assert fields["1回の支払額（円） *"].error and not saved
     fields["1回の支払額（円） *"].value = "10000"
-    save.on_click(None)
+    click(save)
     assert len(saved) == 1 and saved[0]["amount"] == 10000
     assert not save.disabled and not fields["サービス名 *"].disabled
 
@@ -45,18 +54,18 @@ def test_status_requires_confirmation_and_preserves_id():
     changed = []
     view = status_actions(page, item, api_client, changed.append)
     save = view.controls[-1]
-    save.on_click(None)
+    click(save)
     assert not changed
     check = next(control for control in view.controls if isinstance(control, ft.Checkbox))
     check.value = True
-    save.on_click(None)
+    click(save)
     assert changed[0]["status"] == "cancelled"
     view = status_actions(page, changed[0], api_client, changed.append)
     joined = next(control for control in view.controls if isinstance(control, ft.TextField))
     joined.value = "invalid"
     next(control for control in view.controls if isinstance(control, ft.Checkbox)).value = True
-    view.controls[-1].on_click(None)
+    click(view.controls[-1])
     assert joined.error and len(changed) == 1
     joined.value = "2026-10-05T12:00"
-    view.controls[-1].on_click(None)
+    click(view.controls[-1])
     assert changed[-1]["status"] == "active" and changed[-1]["id"] == item["id"]

@@ -4,6 +4,8 @@
 解約・再契約の確認フローは components.status_actions に委ねる(登録画面とは独立して作られた部品)。
 """
 
+import asyncio
+
 import flet as ft
 
 import api_client
@@ -31,19 +33,22 @@ def detail_view(page: ft.Page) -> ft.Control:
         return feedback.message_panel(str(error), icon=ft.Icons.ERROR_OUTLINE)
 
     def open_delete_dialog(event):
-        def confirm_delete(event):
-            api_client.delete_subscription(sub_id)
+        async def confirm_delete(event):
+            cancel_button.disabled = True
+            delete_button.disabled = True
+            delete_button.content = ft.ProgressRing(width=16, height=16, color=theme.DANGER)
+            dialog.update()
+            await asyncio.to_thread(api_client.delete_subscription, sub_id)
             page.pop_dialog()
             page.show_dialog(ft.SnackBar(ft.Text("削除しました．")))
             navigation.go_back(page)
 
+        cancel_button = ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog())
+        delete_button = ft.TextButton("削除", on_click=confirm_delete)
         dialog = ft.AlertDialog(
             title=ft.Text("サブスクの削除"),
             content=ft.Text(f"「{item.get('name')}」を一覧から削除してもよろしいですか．"),
-            actions=[
-                ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog()),
-                ft.TextButton("削除", on_click=confirm_delete),
-            ],
+            actions=[cancel_button, delete_button],
         )
         page.show_dialog(dialog)
 

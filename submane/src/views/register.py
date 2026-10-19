@@ -1,4 +1,5 @@
 """サブスク登録画面(担当: 石井)。定番サービスの検索と手入力の両方に対応する。"""
+import asyncio
 from datetime import datetime
 
 import flet as ft
@@ -77,10 +78,13 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
         results.controls = [ft.Text("選択済み：" + service["name"], color=theme.ACCENT)]
         page.update()
 
-    def search_services(event=None):
+    async def search_services(event=None):
         """定番サービスを名称で検索し，候補をボタンで一覧表示する．"""
+        results.controls = [ft.Container(alignment=ft.Alignment.CENTER,
+                                         content=ft.ProgressRing(width=20, height=20))]
+        page.update()
         try:
-            services = api_client.search_services(search.value or "")
+            services = await asyncio.to_thread(api_client.search_services, search.value or "")
             results.controls = [ft.Button(service["name"], height=44,
                                on_click=lambda e, service=service: choose_service(service)) for service in services]
             if not services:
@@ -102,7 +106,7 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
         results.controls = []
         page.update()
 
-    def save(event):
+    async def save(event):
         """入力を検証し，二重クリックによる重複登録を防ぐ．"""
         if selected["busy"]:
             return
@@ -131,11 +135,15 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
         data["trial_end_at"] = data["trial_end_at"] or None
         selected["busy"] = True
         save_button.disabled = True
+        save_button.icon = None
+        save_button.content = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=8, controls=[
+            ft.ProgressRing(width=16, height=16, color=theme.SURFACE), ft.Text("登録しています…"),
+        ])
         for control in [search, plans, manual_button, back_button, *fields.values()]:
             control.disabled = True
         page.update()
         try:
-            item = api_client.create_subscription(data)
+            item = await asyncio.to_thread(api_client.create_subscription, data)
         except ApiError as error:
             message.value = str(error)
         else:
@@ -143,6 +151,8 @@ def register_view(page: ft.Page, on_saved=None, on_back=None) -> ft.Control:
         finally:
             selected["busy"] = False
             save_button.disabled = False
+            save_button.icon = ft.Icons.ADD
+            save_button.content = "この内容で登録する"
             for control in [search, plans, manual_button, back_button, *fields.values()]:
                 control.disabled = False
             page.update()
