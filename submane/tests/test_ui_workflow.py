@@ -1,3 +1,4 @@
+from ui_helpers import walk, save_button, results_column
 """Fletコントロールの生成と，画面イベントから保存までの流れを確認する．"""
 import asyncio
 import flet as ft
@@ -25,17 +26,17 @@ def test_registration_search_plan_and_save(tmp_path):
         client = ApiClient(tmp_path / "records.json", use_dummy=True)
         saved = []
         view = register_view(page, client, on_saved=saved.append)
-        fields = {control.label: control for control in view.controls if isinstance(control, (ft.TextField, ft.Dropdown))}
-        search_button = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
+        fields = {control.label: control for control in walk(view) if isinstance(control, (ft.TextField, ft.Dropdown))}
+        search_button = next(control for control in walk(view) if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
         await search_button.on_click(None)
-        results = next(control for control in view.controls if isinstance(control, ft.Column))
-        next(c for c in results.controls if c.content == "動画サービス（デモ）").on_click(None)
+        results = results_column(view)
+        next(c for c in results.controls if c.content.controls[1].value == "動画サービス（デモ）").on_click(None)
         assert fields["サービス名 *"].value == "動画サービス（デモ）"
         assert int(fields["1回の支払額（円） *"].value) >= 0
         fields["定番サービスのプラン"].value = "1"
         fields["定番サービスのプラン"].on_select(None)
         assert fields["料金プラン名 *"].value
-        save = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "この内容で登録する")
+        save = next(control for control in walk(view) if isinstance(control, ft.Button) and control.content == "この内容で登録する")
         fields["1回の支払額（円） *"].value = "-1"
         await save.on_click(None)
         assert fields["1回の支払額（円） *"].error and not saved
@@ -59,14 +60,14 @@ def test_status_requires_confirmation_and_preserves_id(tmp_path):
         save = view.controls[-1]
         await save.on_click(None)
         assert not changed
-        check = next(control for control in view.controls if isinstance(control, ft.Checkbox))
+        check = next(control for control in walk(view) if isinstance(control, ft.Checkbox))
         check.value = True
         await save.on_click(None)
         assert changed[0]["status"] == "cancelled"
         view = status_actions(page, changed[0], client, changed.append)
-        joined = next(control for control in view.controls if isinstance(control, ft.TextField))
+        joined = next(control for control in walk(view) if isinstance(control, ft.TextField))
         joined.value = "invalid"
-        next(control for control in view.controls if isinstance(control, ft.Checkbox)).value = True
+        next(control for control in walk(view) if isinstance(control, ft.Checkbox)).value = True
         await view.controls[-1].on_click(None)
         assert joined.error and len(changed) == 1
         joined.value = "2026-10-05T12:00"
@@ -93,11 +94,11 @@ def test_api_field_error_is_shown_and_input_is_preserved():
                            details={"custom_name": ["名称を確認してください"]})
     async def scenario():
         view = register_view(PageStub(), FailingApi())
-        fields = {control.label: control for control in view.controls if isinstance(control, ft.TextField)}
+        fields = {control.label: control for control in walk(view) if isinstance(control, ft.TextField)}
         fields["サービス名 *"].value = "試作"
         fields["料金プラン名 *"].value = "月額"
         fields["1回の支払額（円） *"].value = "1000"
-        save = view.controls[-1]
+        save = save_button(view)
         await save.on_click(None)
         assert fields["サービス名 *"].error == "名称を確認してください"
         assert fields["サービス名 *"].value == "試作" and not save.disabled
@@ -116,13 +117,13 @@ def test_delayed_search_does_not_replace_manual_entry():
     async def scenario():
         api = DelayedApi()
         view = register_view(PageStub(), api)
-        search = next(c for c in view.controls if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
+        search = next(c for c in walk(view) if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
         pending = asyncio.create_task(search.on_click(None))
         await api.started.wait()
-        next(c for c in view.controls if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
+        next(c for c in walk(view) if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
         api.finish.set()
         await pending
-        results = next(c for c in view.controls if isinstance(c, ft.Column))
+        results = results_column(view)
         assert results.controls == []
     asyncio.run(scenario())
 

@@ -1,3 +1,4 @@
+from ui_helpers import walk, save_button, results_column
 """develop共通APIと石井担当画面の接続を検証する．"""
 import asyncio
 import json
@@ -21,11 +22,11 @@ def test_registration_and_status_use_same_shared_store():
         page = PageStub()
         initial = len(api_client.list_subscriptions())
         view = register_view(page, on_saved=saved.append, on_back=lambda: None)
-        fields = {c.label: c for c in view.controls if isinstance(c, ft.TextField)}
+        fields = {c.label: c for c in walk(view) if isinstance(c, ft.TextField)}
         fields["サービス名 *"].value = "共通APIへの登録"
         fields["料金プラン名 *"].value = "月額"
         fields["1回の支払額（円） *"].value = "1000"
-        await view.controls[-1].on_click(None)
+        await save_button(view).on_click(None)
         assert len(api_client.list_subscriptions()) == initial + 1
         item = api_client.get_subscription(saved[0]["id"])
         changed = []
@@ -55,15 +56,15 @@ def test_shared_api_uses_v02_paths_payload_and_cookie(monkeypatch):
         assert json.loads(request.content) == {"status": "cancelled"}
         return httpx.Response(200, json={"id": 42, "status": "cancelled"})
     monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
-    with httpx.Client(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as client:
+    with httpx.Client(base_url="https://test.example/", transport=httpx.MockTransport(handler)) as client:
         monkeypatch.setattr(api_client, "_client", client)
         api_client.log_in("demo@example.com", "secret")
         item = api_client.list_subscriptions()[0]
-        assert item["joined_at"] == "2026-10-05T12:30"
+        assert item["joined_at"] == "2026-10-05T12:30+09:00"
         assert item["next_payment_at"] == "2026-11-05T12:30+09:00"
         api_client.create_subscription({"name": "試作", "plan_name": "月額", "amount": 1000, "cycle": "monthly", "status": "active", "joined_at": "2026-10-05T12:30", "service_id": 3, "plan_id": 30})
         api_client.update_subscription(42, cancellation_patch())
-    assert [r.url.path for r in seen] == ["/api/v1/session", "/api/v1/subscriptions", "/api/v1/subscriptions", "/api/v1/subscriptions/42"]
+    assert [r.url.path for r in seen] == ["/api/v1/session", "/api/v1/services", "/api/v1/subscriptions", "/api/v1/subscriptions", "/api/v1/subscriptions/42"]
 
 
 

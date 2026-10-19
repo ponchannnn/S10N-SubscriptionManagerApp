@@ -3,13 +3,13 @@
 import flet as ft
 
 # ---- 色 ----
-GROUND = "#F3F5F4"       # 画面の地色
+GROUND = "#F5F7F6"       # 画面の地色
 SURFACE = "#FFFFFF"      # ボタン、タブバー、カード
 INK = "#14201C"          # 本文
 INK_SUB = "#4A5552"      # 補足テキスト
-LINE = "#D3D8D6"         # 枠線
-ACCENT = "#0E6B5C"       # 主要ボタン、選択中の表示
-ACCENT_SOFT = "#DCEBE7"  # 選択中タブの背景
+LINE = "#E0E7E3"         # 枠線
+ACCENT = "#146C5A"       # 主要ボタン、選択中の表示
+ACCENT_SOFT = "#E0F0E8"  # 選択中タブの背景
 TRIAL = "#B45309"        # 無料トライアルのバッジ
 OFF_FILL = "#D3D8D6"     # 解約済みアイコンの面
 OFF_INK = "#5A6360"      # 解約済みの文字
@@ -25,7 +25,7 @@ TILE_COLORS = [
 ]
 
 # ---- 寸法 ----
-GUTTER = 24        # 画面左右の余白
+GUTTER = 16        # 画面左右の余白
 TAP_MIN = 44       # タップできる要素の最小サイズ
 BASE_WIDTH = 390   # 基準の画面幅
 BASE_HEIGHT = 844

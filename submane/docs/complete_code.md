@@ -1,6 +1,823 @@
-# 石井ブランチ・統合後の全コード
+# アプリの全コード
 
-2026-10-05更新．コードを省略せず掲載しています．
+2026-10-19更新．ishiiブランチのソース・テスト・設定・起動スクリプト・独立HTMLデモの全文です．画像の取得元はsrc/assets/icons/sources.jsonに保存しています．
+
+## docs/home_mock.html
+
+```html
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>サブマネ | ホーム</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+/* ==========================================================
+   デザイントークン(他画面でも同じ値を使うと見た目が揃います)
+   ========================================================== */
+:root {
+  --ground: #F3F5F4;      /* 画面の地色 */
+  --surface: #FFFFFF;     /* ボタン・タブバーの面 */
+  --ink: #14201C;         /* 本文 */
+  --ink-sub: #4A5552;     /* 補足テキスト */
+  --line: #D3D8D6;        /* 枠線 */
+  --accent: #0E6B5C;      /* 主要ボタン・選択中 */
+  --accent-soft: #DCEBE7; /* 選択中タブの背景 */
+  --trial: #B45309;       /* 無料トライアルのバッジ */
+  --off-fill: #D3D8D6;    /* 解約済みアイコンの面 */
+  --off-ink: #5A6360;     /* 解約済みの文字 */
+  --dot: #AEB6B3;         /* ページ位置の点(非選択) */
+  --font: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --gutter: 24px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: inherit; text-decoration: none; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+/* PCで開いたときはスマホ幅で中央に置く */
+.app {
+  max-width: 430px;
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ---------- ヘッダー ---------- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px var(--gutter) 0;
+}
+.brand { font-size: 22px; font-weight: 900; letter-spacing: 0.02em; line-height: 44px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.btn-add {
+  height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: 22px;
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-account {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- 見出し ---------- */
+.intro { padding: 24px var(--gutter) 0; }
+.intro h1 { margin: 0; font-size: 26px; font-weight: 700; line-height: 34px; }
+.summary { margin: 4px 0 0; font-size: 13px; line-height: 20px; color: var(--ink-sub); }
+
+/* ---------- 並び替えと凡例 ---------- */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px var(--gutter) 0;
+}
+.sort { position: relative; display: flex; align-items: center; }
+.sort svg { position: absolute; pointer-events: none; }
+.sort .icon-sort { left: 12px; }
+.sort .icon-chevron { right: 12px; }
+.sort select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 44px;
+  padding: 0 34px 0 34px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.legend { display: flex; align-items: center; gap: 12px; margin: 0; padding: 0; list-style: none; font-size: 11px; line-height: 16px; color: var(--ink-sub); }
+.legend li { display: flex; align-items: center; gap: 5px; }
+.legend-trial {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--trial);
+  display: flex; align-items: center; justify-content: center;
+}
+.legend-off { width: 14px; height: 14px; border-radius: 4px; background: #C3CAC7; }
+
+/* ---------- アイコン一覧(横スワイプでページ送り) ---------- */
+.pager {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  padding-top: 28px;
+}
+.pager::-webkit-scrollbar { display: none; }
+.page {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: start;
+  gap: 26px 14px;
+  padding: 8px var(--gutter) 0; /* 上8pxはトライアルバッジのはみ出し分 */
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tile-icon {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+}
+.tile-icon img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; display: block; }
+.tile-name {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--trial);
+  border: 3px solid var(--ground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 解約済み: アイコンは残してグレーアウト */
+.tile.is-cancelled { color: var(--off-ink); }
+.tile.is-cancelled .tile-icon { background: var(--off-fill) !important; color: var(--off-ink); }
+.tile.is-cancelled .tile-icon img { filter: grayscale(1); opacity: 0.55; }
+
+/* ---------- ページ位置 ---------- */
+.page-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px var(--gutter) 24px;
+}
+.dots { display: flex; align-items: center; }
+.dot {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 28px;
+  height: 44px; /* タップしやすい大きさを確保 */
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--dot);
+  transition: width 0.2s, background 0.2s;
+}
+.dot[aria-current="true"]::before { width: 20px; background: var(--accent); }
+.page-count { margin: 0; font-size: 12px; line-height: 18px; color: var(--ink-sub); }
+
+/* ---------- 0件のとき ---------- */
+.empty { padding: 48px var(--gutter); text-align: center; }
+.empty p { margin: 0 0 20px; font-size: 14px; line-height: 24px; color: var(--ink-sub); }
+.empty .btn-add { display: inline-flex; }
+
+.spacer { flex: 1 1 auto; }
+
+/* ---------- 下部タブ ---------- */
+.tabbar {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  background: var(--surface);
+  border-top: 1px solid #DDE2E0;
+  padding: 8px var(--gutter) calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.tab {
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--ink-sub);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.tab-icon { width: 56px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; }
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"] .tab-icon { background: var(--accent-soft); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot::before { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div class="brand">サブマネ</div>
+    <div class="header-actions">
+      <a class="btn-add" data-link="register" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        追加
+      </a>
+      <a class="btn-account" data-link="account" href="#" aria-label="アカウント">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <h1>契約中のサブスク</h1>
+      <p class="summary" id="summary"></p>
+    </section>
+
+    <div class="controls" id="controls">
+      <label class="sort">
+        <svg class="icon-sort" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M7 20l-3-3M7 20l3-3M13 7h8M13 12h6M13 17h4"/></svg>
+        <select id="sort" aria-label="並び順">
+          <option value="frequency">更新頻度順</option>
+          <option value="registered">登録順</option>
+        </select>
+        <svg class="icon-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </label>
+      <ul class="legend">
+        <li>
+          <span class="legend-trial"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          トライアル中
+        </li>
+        <li><span class="legend-off"></span>解約済み</li>
+      </ul>
+    </div>
+
+    <!-- アイコン一覧。中身は下のスクリプトが描画する -->
+    <div class="pager" id="pager" tabindex="0" aria-label="サブスク一覧"></div>
+
+    <div class="page-status" id="pageStatus">
+      <div class="dots" id="dots"></div>
+      <p class="page-count" id="pageCount" aria-live="polite"></p>
+    </div>
+
+    <div class="empty" id="empty" hidden>
+      <p>まだサブスクが登録されていません。<br>契約中のサービスを追加すると、ここに一覧で表示されます。</p>
+      <a class="btn-add" data-link="register" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        サブスクを追加
+      </a>
+    </div>
+  </main>
+
+  <div class="spacer"></div>
+
+  <nav class="tabbar" aria-label="メインメニュー">
+    <a class="tab" data-link="home" href="#" aria-current="page">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg></span>
+      ホーム
+    </a>
+    <a class="tab" data-link="breakdown" href="#">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg></span>
+      内訳
+    </a>
+    <a class="tab" data-link="deadline" href="#">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg></span>
+      期限
+    </a>
+  </nav>
+</div>
+
+<script>
+/* ==========================================================
+   1. 他画面へのリンク先
+      ファイル名は仮です。各担当の画面ができたらここだけ直してください。
+   ========================================================== */
+const ROUTES = {
+  home: 'home.html',
+  register: 'register.html',   // サブスク登録画面
+  detail: 'detail.html',       // 詳細画面(?id=xxx を付けて開く)
+  breakdown: 'breakdown.html', // 内訳画面
+  deadline: 'deadline.html',   // 期限画面
+  account: 'account.html',     // 会員登録・ログイン
+};
+
+/* ==========================================================
+   2. 表示するデータ(サンプル)
+      DB・APIができたら loadSubscriptions() の中身を差し替えてください。
+        id     : 一意なID
+        name   : サービス名
+        cycle  : 'monthly' | 'yearly'            料金プランの更新周期
+        status : 'active' | 'trial' | 'cancelled' 契約中 / 無料トライアル中 / 解約済み
+        icon   : アイコン画像のURL(省略すると頭文字のタイルを表示)
+   ========================================================== */
+const SAMPLE_SUBSCRIPTIONS = [
+  { id: 'netflix',   name: 'Netflix',          cycle: 'monthly', status: 'active' },
+  { id: 'spotify',   name: 'Spotify',          cycle: 'monthly', status: 'active' },
+  { id: 'audible',   name: 'Audible',          cycle: 'monthly', status: 'cancelled' },
+  { id: 'unext',     name: 'U-NEXT',           cycle: 'monthly', status: 'trial' },
+  { id: 'amazon',    name: 'Amazonプライム',    cycle: 'yearly',  status: 'active' },
+  { id: 'youtube',   name: 'YouTube Premium',  cycle: 'monthly', status: 'active' },
+  { id: 'disney',    name: 'Disney+',          cycle: 'monthly', status: 'active' },
+  { id: 'fod',       name: 'FODプレミアム',     cycle: 'monthly', status: 'cancelled' },
+  { id: 'dazn',      name: 'DAZN',             cycle: 'monthly', status: 'active' },
+  { id: 'applemusic',name: 'Apple Music',      cycle: 'monthly', status: 'active' },
+  { id: 'adobe',     name: 'Adobe CC',         cycle: 'yearly',  status: 'active' },
+  { id: 'hulu',      name: 'Hulu',             cycle: 'monthly', status: 'active' },
+  { id: 'kindle',    name: 'Kindle Unlimited', cycle: 'monthly', status: 'trial' },
+  { id: 'lemino',    name: 'Lemino',           cycle: 'monthly', status: 'cancelled' },
+  { id: 'abema',     name: 'ABEMAプレミアム',   cycle: 'monthly', status: 'active' },
+  { id: 'icloud',    name: 'iCloud+',          cycle: 'monthly', status: 'active' },
+  { id: 'danime',    name: 'dアニメストア',     cycle: 'monthly', status: 'active' },
+  { id: 'nhk',       name: 'NHKオンデマンド',   cycle: 'monthly', status: 'cancelled' },
+];
+
+async function loadSubscriptions() {
+  // 例: const res = await fetch('/api/subscriptions'); return res.json();
+  return SAMPLE_SUBSCRIPTIONS;
+}
+
+/* ==========================================================
+   3. 画面の描画
+   ========================================================== */
+const PER_PAGE = 12; // 1ページ = 4列 x 3行
+const TILE_COLORS = ['#7A2E3A', '#2F5D50', '#1F3A5F', '#8A4B14', '#2B4C7E', '#3D4A1F', '#6B2D5C', '#23515E', '#4A3728', '#36594A', '#5B3F8C', '#5E2A4F'];
+const CYCLE_RANK = { weekly: 0, monthly: 1, yearly: 2 }; // 小さいほど更新頻度が高い
+const CLOCK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+const el = (id) => document.getElementById(id);
+const pager = el('pager');
+let subscriptions = [];
+
+// 並び替え。どの順でも解約済みは末尾にまとめる
+function sortSubscriptions(list, order) {
+  const indexed = list.map((sub, index) => ({ sub, index }));
+  indexed.sort((a, b) => {
+    const cancelledA = a.sub.status === 'cancelled' ? 1 : 0;
+    const cancelledB = b.sub.status === 'cancelled' ? 1 : 0;
+    if (cancelledA !== cancelledB) return cancelledA - cancelledB;
+    if (order === 'frequency') {
+      const rankA = CYCLE_RANK[a.sub.cycle] ?? 9;
+      const rankB = CYCLE_RANK[b.sub.cycle] ?? 9;
+      if (rankA !== rankB) return rankA - rankB;
+    }
+    return a.index - b.index; // 同順位は登録順
+  });
+  return indexed.map((item) => item.sub);
+}
+
+function createTile(sub, colorIndex) {
+  const tile = document.createElement('a');
+  tile.className = 'tile';
+  tile.href = ROUTES.detail + '?id=' + encodeURIComponent(sub.id);
+
+  const icon = document.createElement('span');
+  icon.className = 'tile-icon';
+  if (sub.icon) {
+    const img = document.createElement('img');
+    img.src = sub.icon;
+    img.alt = '';
+    icon.appendChild(img);
+  } else {
+    icon.style.background = sub.color || TILE_COLORS[colorIndex % TILE_COLORS.length];
+    icon.appendChild(document.createTextNode(sub.name.charAt(0)));
+  }
+
+  let stateLabel = '';
+  if (sub.status === 'trial') {
+    const badge = document.createElement('span');
+    badge.className = 'tile-badge';
+    badge.innerHTML = CLOCK_SVG;
+    icon.appendChild(badge);
+    stateLabel = '(無料トライアル中)';
+  } else if (sub.status === 'cancelled') {
+    tile.classList.add('is-cancelled');
+    stateLabel = '(解約済み)';
+  }
+
+  const name = document.createElement('span');
+  name.className = 'tile-name';
+  name.textContent = sub.name;
+
+  tile.setAttribute('aria-label', sub.name + stateLabel + 'の詳細を開く');
+  tile.append(icon, name);
+  return tile;
+}
+
+function render() {
+  const total = subscriptions.length;
+  const cancelled = subscriptions.filter((s) => s.status === 'cancelled').length;
+  const trial = subscriptions.filter((s) => s.status === 'trial').length;
+
+  const isEmpty = total === 0;
+  el('empty').hidden = !isEmpty;
+  el('controls').hidden = isEmpty;
+  pager.hidden = isEmpty;
+  el('pageStatus').hidden = isEmpty;
+  el('summary').textContent = isEmpty
+    ? ''
+    : `契約中 ${total - cancelled}件 / うちトライアル ${trial}件 / 解約済み ${cancelled}件`;
+  if (isEmpty) return;
+
+  // 色は登録順で固定し、並び替えても同じサービスは同じ色にする
+  const colorIndex = new Map(subscriptions.map((s, i) => [s.id, i]));
+  const sorted = sortSubscriptions(subscriptions, el('sort').value);
+
+  pager.textContent = '';
+  for (let i = 0; i < sorted.length; i += PER_PAGE) {
+    const page = document.createElement('div');
+    page.className = 'page';
+    sorted.slice(i, i + PER_PAGE).forEach((sub) => page.appendChild(createTile(sub, colorIndex.get(sub.id))));
+    pager.appendChild(page);
+  }
+  pager.scrollLeft = 0;
+  renderDots();
+}
+
+function pageTotal() { return pager.children.length; }
+function currentPage() { return Math.round(pager.scrollLeft / pager.clientWidth) || 0; }
+
+function renderDots() {
+  const dots = el('dots');
+  dots.textContent = '';
+  for (let i = 0; i < pageTotal(); i++) {
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'dot';
+    dot.setAttribute('aria-label', (i + 1) + 'ページ目を表示');
+    dot.addEventListener('click', () => {
+      pager.scrollTo({ left: i * pager.clientWidth, behavior: 'smooth' });
+    });
+    dots.appendChild(dot);
+  }
+  dots.hidden = pageTotal() < 2;
+  updatePageStatus();
+}
+
+function updatePageStatus() {
+  const current = currentPage();
+  [...el('dots').children].forEach((dot, i) => dot.setAttribute('aria-current', String(i === current)));
+  el('pageCount').textContent = pageTotal() < 2 ? '' : `${current + 1} / ${pageTotal()}`;
+}
+
+/* ==========================================================
+   4. 初期化
+   ========================================================== */
+document.querySelectorAll('[data-link]').forEach((a) => { a.href = ROUTES[a.dataset.link] || '#'; });
+el('sort').addEventListener('change', render);
+pager.addEventListener('scroll', updatePageStatus, { passive: true });
+window.addEventListener('resize', updatePageStatus);
+
+loadSubscriptions().then((list) => {
+  subscriptions = list;
+  render();
+});
+</script>
+</body>
+</html>
+```
+
+## docs/register.html
+
+```html
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>サブマネ | サブスク登録</title>
+<style>
+@font-face { font-family: 'Zen Kaku Gothic New'; src: url('../src/assets/fonts/ZenKakuGothicNew-Regular.ttf') format('truetype'); font-display: swap; }
+:root { --ground:#F3F5F4; --surface:#fff; --ink:#14201C; --muted:#4A5552; --line:#D3D8D6; --accent:#0E6B5C; --soft:#DCEBE7; --trial:#B45309; --error:#B3261E; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--ground); color:var(--ink); font-family:'Zen Kaku Gothic New','Yu Gothic',sans-serif; }
+button,input,select,textarea { font:inherit; }
+button,a,input,select,textarea { -webkit-tap-highlight-color:transparent; }
+button { cursor:pointer; }
+[hidden] { display:none !important; }
+:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+.app { max-width:430px; margin:auto; min-height:100vh; padding:env(safe-area-inset-top) 24px calc(32px + env(safe-area-inset-bottom)); }
+header { display:flex; align-items:center; justify-content:space-between; padding:16px 0 10px; }
+.brand { font-size:22px; font-weight:900; color:var(--accent); }
+.back { min-height:44px; display:inline-flex; align-items:center; color:var(--muted); font-size:13px; text-decoration:none; }
+h1 { font-size:26px; line-height:1.4; margin:14px 0 8px; }
+h2 { font-size:18px; margin:0 0 16px; }
+p { line-height:1.7; }
+.intro { font-size:14px; color:var(--muted); margin:0 0 20px; }
+.demo { font-size:12px; background:var(--soft); color:var(--accent); border-radius:10px; padding:10px 12px; margin:0 0 24px; }
+.section { border-top:1px solid var(--line); padding:24px 0 8px; }
+.step { color:var(--accent); font-size:12px; display:block; margin-bottom:4px; letter-spacing:.08em; }
+.field { margin-bottom:18px; }
+label { display:block; font-size:13px; font-weight:bold; margin-bottom:7px; }
+.required { color:var(--accent); font-size:11px; margin-left:6px; }
+.optional { color:var(--muted); font-size:11px; font-weight:normal; margin-left:6px; }
+input,select,textarea { width:100%; min-width:0; min-height:48px; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--ink); background:var(--surface); font-size:15px; }
+textarea { resize:vertical; min-height:96px; }
+input[aria-invalid="true"],select[aria-invalid="true"] { border-color:var(--error); }
+.helper { display:block; margin:6px 0 0; font-size:12px; color:var(--muted); line-height:1.65; }
+.error { display:block; font-size:12px; line-height:1.6; color:var(--error); margin-top:5px; }
+.pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.results { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
+.service { display:flex; align-items:center; gap:12px; text-align:left; width:100%; padding:12px; background:var(--surface); border:1px solid var(--line); border-radius:12px; min-height:68px; }
+.service[aria-pressed="true"] { border:2px solid var(--accent); background:var(--soft); }
+.service-icon { flex:0 0 40px; height:40px; display:grid; place-items:center; border-radius:12px; color:white; background:var(--accent); font-size:18px; }
+.service-name { font-weight:bold; font-size:14px; }
+.service-note { color:var(--muted); font-size:11px; display:block; margin-top:2px; }
+.text-button { border:0; background:none; color:var(--accent); min-height:44px; padding:8px 0; font-size:13px; text-align:left; }
+.primary { width:100%; min-height:50px; border:0; border-radius:12px; background:var(--accent); color:white; font-size:15px; font-weight:bold; padding:12px; }
+button:disabled { cursor:default; opacity:.6; }
+.notice { margin:12px 0; font-size:13px; color:var(--error); }
+.success { border:1px solid var(--accent); background:var(--soft); border-radius:12px; padding:18px; margin:18px 0; }
+.success h2 { margin-bottom:8px; color:var(--accent); }
+.success p { font-size:13px; margin:4px 0; }
+.saved { padding:12px 0; border-bottom:1px solid var(--line); }
+.saved strong { display:block; font-size:14px; }
+.saved span { color:var(--muted); font-size:12px; }
+.saved.cancelled { opacity:.6; }
+.saved.trial strong::before { content:'◷ '; color:var(--trial); }
+footer { color:var(--muted); font-size:11px; text-align:center; margin-top:24px; }
+@media(max-width:350px) { .app { padding-left:16px; padding-right:16px; } .pair { grid-template-columns:1fr; gap:0; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header><span class="brand">サブマネ</span><a class="back" href="home_mock.html">‹ ホームの見本へ</a></header>
+  <main>
+    <h1>サブスクを追加</h1>
+    <p class="intro">サービスを選ぶか，契約内容を手入力して登録してください．</p>
+    <p class="demo">HTMLデモ：登録内容はこのブラウザに保存します．Flet版とは同期しません．</p>
+    <section aria-labelledby="search-heading">
+      <span class="step">STEP 01</span><h2 id="search-heading">サービスを選ぶ</h2>
+      <label for="search">定番サービスを名称で検索</label>
+      <input id="search" type="search" placeholder="動画，音楽，読書など" autocomplete="off" aria-describedby="master-note">
+      <span class="helper" id="master-note">表示される名称・料金・URLは架空のデモ情報です．</span>
+      <div class="results" id="results" aria-label="検索結果"></div>
+      <p class="helper" id="search-status" role="status"></p>
+      <button class="text-button" id="manual" type="button">＋ 定番にないサービスを手入力する</button>
+    </section>
+    <form id="registration" novalidate>
+      <section class="section" aria-labelledby="contract-heading">
+        <span class="step">STEP 02</span><h2 id="contract-heading">契約内容を入力</h2>
+        <div class="field" id="preset-field" hidden>
+          <label for="preset">定番サービスのプラン</label><select id="preset"></select>
+          <span class="helper">プランを選んだ後，各項目を修正できます．</span>
+        </div>
+        <div class="field"><label for="name">サービス名<span class="required">必須</span></label>
+          <input id="name" name="name" maxlength="100" required aria-describedby="name-error"><span class="error" id="name-error"></span></div>
+        <div class="field"><label for="plan_name">料金プラン名<span class="required">必須</span></label>
+          <input id="plan_name" name="plan_name" maxlength="100" placeholder="個人プランなど" required aria-describedby="plan_name-error"><span class="error" id="plan_name-error"></span></div>
+        <div class="pair">
+          <div class="field"><label for="cycle">更新周期<span class="required">必須</span></label>
+            <select id="cycle" name="cycle" aria-describedby="cycle-error"><option value="monthly">月額</option><option value="yearly">年額</option></select><span class="error" id="cycle-error"></span></div>
+          <div class="field"><label for="amount">1回の支払額（円）<span class="required">必須</span></label>
+            <input id="amount" name="amount" type="text" inputmode="numeric" placeholder="1000" required aria-describedby="amount-error amount-help"><span class="error" id="amount-error"></span></div>
+        </div>
+        <p class="helper" id="amount-help">無料トライアル中も，有料移行後の1回の金額を入力してください．</p>
+        <div class="field" style="margin-top:18px"><label for="joined_at">入会日時<span class="required">必須</span></label>
+          <input id="joined_at" name="joined_at" type="datetime-local" step="60" required aria-describedby="joined_at-error joined-help">
+          <span class="helper" id="joined-help">日本時間・分単位で入力してください．</span><span class="error" id="joined_at-error"></span></div>
+        <div class="field"><label for="status">契約状態<span class="required">必須</span></label>
+          <select id="status" name="status" aria-describedby="status-error"><option value="active">契約中</option><option value="trial">無料トライアル中</option><option value="cancelled">解約済み</option></select><span class="error" id="status-error"></span></div>
+        <div class="field" id="trial-field" hidden><label for="trial_ends_at">トライアル終了日時<span class="required">必須</span></label>
+          <input id="trial_ends_at" name="trial_ends_at" type="datetime-local" step="60" aria-describedby="trial_ends_at-error trial-help">
+          <span class="helper" id="trial-help">この日時をトライアルの次回支払日として扱います．</span><span class="error" id="trial_ends_at-error"></span></div>
+      </section>
+      <section class="section" aria-labelledby="url-heading">
+        <span class="step">STEP 03</span><h2 id="url-heading">入会・退会の情報</h2>
+        <div class="field"><label for="join_url">入会URL<span class="optional">任意</span></label>
+          <input id="join_url" name="join_url" type="url" maxlength="2048" placeholder="https://…" aria-describedby="join_url-error"><span class="error" id="join_url-error"></span></div>
+        <div class="field"><label for="cancel_url">退会URL<span class="optional">任意</span></label>
+          <input id="cancel_url" name="cancel_url" type="url" maxlength="2048" placeholder="https://…" aria-describedby="cancel_url-error"><span class="error" id="cancel_url-error"></span></div>
+        <div class="field"><label for="cancel_memo">退会に必要な情報<span class="optional">任意</span></label>
+          <textarea id="cancel_memo" name="cancel_memo" maxlength="1000" placeholder="例：メールアドレスとパスワードの準備が必要" aria-describedby="memo-help cancel_memo-error"></textarea>
+          <span class="helper" id="memo-help">パスワード自体は入力しないでください．必要な準備や手順だけを記録します．</span><span class="error" id="cancel_memo-error"></span></div>
+      </section>
+      <p class="notice" id="message" role="alert"></p>
+      <button class="primary" id="submit" type="submit">この内容で登録する</button>
+    </form>
+    <section class="success" id="success" aria-labelledby="success-heading" hidden>
+      <h2 id="success-heading">登録しました</h2><p id="success-detail"></p>
+      <button class="text-button" type="button" id="another">続けて別のサブスクを追加する →</button>
+    </section>
+    <section class="section" aria-labelledby="saved-heading">
+      <h2 id="saved-heading">このブラウザに登録したサブスク</h2>
+      <div id="saved-list"></div><p class="helper" id="saved-status" role="status"></p>
+      <button class="text-button" id="export" type="button" disabled>登録データをJSONで保存する ↓</button>
+    </section>
+  </main>
+  <footer>サブマネ · 石井担当の登録画面</footer>
+</div>
+<script>
+'use strict';
+const STORAGE_KEY = 'submane.ishii.html.subscriptions.v1';
+const SERVICES = [
+  { id:'video-demo', name:'動画サービス（デモ）', aliases:['動画','video'], join_url:'https://example.com/video/join', cancel_url:'https://example.com/video/cancel', cancel_memo:'退会手続きにはメールアドレスとパスワードの準備が必要です．', plans:[{name:'月額プラン（デモ）',cycle:'monthly',amount:1000},{name:'年額プラン（デモ）',cycle:'yearly',amount:10000}] },
+  { id:'music-demo', name:'音楽サービス（デモ）', aliases:['音楽','music'], join_url:'https://example.com/music/join', cancel_url:'https://example.com/music/cancel', cancel_memo:'契約した窓口を確認してください．', plans:[{name:'個人プラン（デモ）',cycle:'monthly',amount:800}] },
+  { id:'book-demo', name:'読書サービス（デモ）', aliases:['読書','book'], join_url:'https://example.com/book/join', cancel_url:'https://example.com/book/cancel', cancel_memo:'パスワードの準備が必要です．', plans:[{name:'月額プラン（デモ）',cycle:'monthly',amount:500}] }
+];
+const FIELD_NAMES = ['name','plan_name','cycle','amount','joined_at','status','trial_ends_at','join_url','cancel_url','cancel_memo'];
+const normalize = value => String(value).normalize('NFKC').toLocaleLowerCase('ja').trim();
+function searchServices(keyword) {
+  return SERVICES.filter(service => normalize([service.name,...service.aliases].join(' ')).includes(normalize(keyword)));
+}
+function validUrl(value) {
+  if (!value) return true;
+  if (/\s/.test(value) || value.length > 2048 || !/^https?:\/\//.test(value)) return false;
+  try { const url = new URL(value); return !!url.hostname && !url.username && !url.password && url.port !== '0'; }
+  catch { return false; }
+}
+function validTime(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year,month,day,hour,minute] = match.slice(1).map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59) return false;
+  const date = new Date(0); date.setUTCFullYear(year,month-1,day); date.setUTCHours(hour,minute,0,0);
+  return date.getUTCFullYear()===year && date.getUTCMonth()===month-1 && date.getUTCDate()===day;
+}
+function validate(raw) {
+  const data = Object.fromEntries(FIELD_NAMES.map(key => [key,String(raw[key] ?? '').trim()]));
+  const errors = {};
+  for (const key of ['name','plan_name']) {
+    if (!data[key]) errors[key] = '入力してください．';
+    else if ([...data[key]].length > 100) errors[key] = '100文字以内で入力してください．';
+  }
+  const amount = data.amount.normalize('NFKC');
+  if (!/^\d+$/.test(amount) || Number(amount) > 999999999) errors.amount = '0以上999999999以下の整数を円単位で入力してください．';
+  else data.amount = Number(amount);
+  if (!['monthly','yearly'].includes(data.cycle)) errors.cycle = '月額または年額を選択してください．';
+  if (!['active','trial','cancelled'].includes(data.status)) errors.status = '契約状態を選択してください．';
+  if (!validTime(data.joined_at)) errors.joined_at = '実在する入会日時を分単位で入力してください．';
+  if (data.status === 'trial') {
+    if (!validTime(data.trial_ends_at)) errors.trial_ends_at = 'トライアル終了日時を入力してください．';
+    else if (validTime(data.joined_at) && data.trial_ends_at <= data.joined_at) errors.trial_ends_at = '入会日時より後の日時を入力してください．';
+  } else data.trial_ends_at = '';
+  for (const key of ['join_url','cancel_url']) if (!validUrl(data[key])) errors[key] = 'http://またはhttps://で始まるURLを入力してください．';
+  if ([...data.cancel_memo].length > 1000) errors.cancel_memo = '1000文字以内で入力してください．';
+  return {data,errors};
+}
+function readRecords(storage) {
+  const records = JSON.parse(storage.getItem(STORAGE_KEY) || '[]');
+  if (!Array.isArray(records) || records.some(item => !item || typeof item !== 'object' || typeof item.id !== 'string' || typeof item.name !== 'string' || !Number.isInteger(item.amount))) throw new Error('invalid records');
+  return records;
+}
+globalThis.SubmaneRegistration = {validate,validUrl,validTime,searchServices,readRecords,STORAGE_KEY};
+
+function initialize() {
+  const el = id => document.getElementById(id);
+  let selected = null, busy = false, records = [];
+  function japaneseNow() {
+    const parts = new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date());
+    const values = Object.fromEntries(parts.map(part => [part.type,part.value]));
+    return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+  }
+  function clearErrors() {
+    FIELD_NAMES.forEach(key => { el(key).removeAttribute('aria-invalid'); el(key+'-error').textContent=''; });
+    el('message').textContent='';
+  }
+  function applyPlan() {
+    if (!selected) return;
+    const plan = selected.plans[Number(el('preset').value)];
+    el('plan_name').value=plan.name; el('cycle').value=plan.cycle; el('amount').value=plan.amount;
+  }
+  function choose(service) {
+    if (busy) return;
+    selected=service; clearErrors();
+    ['name','join_url','cancel_url','cancel_memo'].forEach(key => { el(key).value=service[key]; });
+    el('preset').replaceChildren(...service.plans.map((plan,index) => new Option(plan.name,String(index))));
+    el('preset-field').hidden=false; applyPlan(); renderSearch();
+    el('search-status').textContent='選択済み：'+service.name;
+  }
+  function renderSearch() {
+    const matches=searchServices(el('search').value); el('results').replaceChildren();
+    matches.forEach(service => {
+      const button=document.createElement('button'); button.type='button'; button.className='service';
+      button.setAttribute('aria-pressed',String(selected?.id===service.id));
+      const icon=document.createElement('span'); icon.className='service-icon'; icon.textContent=service.name[0]; icon.setAttribute('aria-hidden','true');
+      const text=document.createElement('span'); text.className='service-name'; text.textContent=service.name;
+      const note=document.createElement('span'); note.className='service-note'; note.textContent='プラン・入会URL・退会URLを自動入力'; text.append(note);
+      button.append(icon,text); button.addEventListener('click',()=>choose(service)); el('results').append(button);
+    });
+    el('search-status').textContent=matches.length ? `${matches.length}件のサービス` : '該当するサービスがありません．下の欄に手入力できます．';
+  }
+  function setTrial() {
+    const trial=el('status').value==='trial'; el('trial-field').hidden=!trial;
+    el('trial_ends_at').required=trial; if (!trial) el('trial_ends_at').value='';
+  }
+  function renderSaved() {
+    el('saved-list').replaceChildren();
+    records.forEach(item => {
+      const row=document.createElement('div'); row.className='saved '+item.status;
+      const name=document.createElement('strong'); name.textContent=item.name;
+      const detail=document.createElement('span'); detail.textContent=`${item.cycle==='yearly'?'年額':'月額'} · ${item.amount.toLocaleString('ja-JP')}円 · ${{active:'契約中',trial:'無料トライアル中',cancelled:'解約済み'}[item.status] || '状態未設定'}`;
+      row.append(name,detail); el('saved-list').append(row);
+    });
+    el('saved-status').textContent=records.length ? `${records.length}件を保存しています．` : 'まだ登録がありません．';
+    el('export').disabled=!records.length;
+  }
+  el('search').addEventListener('input',renderSearch);
+  el('preset').addEventListener('change',applyPlan);
+  el('status').addEventListener('change',setTrial);
+  el('manual').addEventListener('click',()=>{
+    selected=null; clearErrors(); el('preset-field').hidden=true;
+    ['name','plan_name','amount','join_url','cancel_url','cancel_memo'].forEach(key=>{ el(key).value=''; });
+    renderSearch(); el('name').focus();
+  });
+  el('registration').addEventListener('submit',event=>{
+    event.preventDefault(); if (busy) return; clearErrors();
+    const raw=Object.fromEntries(FIELD_NAMES.map(key=>[key,el(key).value]));
+    const {data,errors}=validate(raw);
+    if (Object.keys(errors).length) {
+      Object.entries(errors).forEach(([key,text])=>{ el(key).setAttribute('aria-invalid','true'); el(key+'-error').textContent=text; });
+      el('message').textContent='入力内容を確認してください．'; el(Object.keys(errors)[0]).focus(); return;
+    }
+    busy=true; el('submit').disabled=true;
+    try {
+      const current=readRecords(localStorage);
+      const id=globalThis.crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+      const item={...data,id,service_id:selected?.id || '',icon:'',registered_at:new Date().toISOString(),next_payment_at:data.status==='trial'?data.trial_ends_at:null};
+      localStorage.setItem(STORAGE_KEY,JSON.stringify([...current,item])); records=[...current,item]; renderSaved();
+      el('success-detail').textContent=`${data.name} · ${data.cycle==='yearly'?'年額':'月額'} ${data.amount.toLocaleString('ja-JP')}円`;
+      el('registration').hidden=true; el('success').hidden=false;
+      el('search').disabled=true; el('manual').disabled=true; el('results').querySelectorAll('button').forEach(button=>{button.disabled=true;});
+      el('success').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
+    } catch {
+      el('message').textContent='保存できませんでした．ブラウザの保存設定，空き容量，保存済みデータの形式を確認してください．入力内容は残っています．';
+    } finally { busy=false; el('submit').disabled=false; }
+  });
+  el('another').addEventListener('click',()=>{
+    el('registration').reset(); selected=null; clearErrors(); el('preset-field').hidden=true;
+    el('joined_at').value=japaneseNow(); setTrial(); el('success').hidden=true; el('registration').hidden=false;
+    el('search').disabled=false; el('manual').disabled=false; renderSearch(); el('search').focus();
+  });
+  el('export').addEventListener('click',()=>{
+    const blob=new Blob([JSON.stringify(records,null,2)],{type:'application/json;charset=utf-8'});
+    const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download='submane-html-subscriptions.json';
+    document.body.append(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  el('joined_at').value=japaneseNow(); renderSearch(); setTrial();
+  try { records=readRecords(localStorage); renderSaved(); }
+  catch { el('saved-status').textContent='保存済みデータを読み取れません．ブラウザの保存設定またはデータ形式を確認してください．'; }
+}
+if (typeof document !== 'undefined') initialize();
+</script>
+</body>
+</html>
+```
 
 ## pyproject.toml
 
@@ -13,16 +830,17 @@ readme = "README.md"
 requires-python = ">=3.12"
 # アプリ(APK)に入るライブラリ。バージョンは全員そろえる。上げるときは全員で同時に。
 dependencies = [
-    "flet==1.0.3",
-    "flet-charts==1.0.3",   # 内訳画面の円グラフ
+    "flet==1.0.4",
+    "flet-charts==1.0.4",   # 内訳画面の円グラフ
     "httpx==0.28.1",        # APIの呼び出し
 ]
 
 [dependency-groups]
 dev = [
-    "flet-cli==1.0.3",
-    "flet-desktop==1.0.3",
-    "flet-web==1.0.3",
+    "flet-cli==1.0.4",
+    "flet-desktop==1.0.4",
+    "flet-web==1.0.4",
+    "fastapi==0.142.2",  # Flet Webで検証した互換バージョン
     "pytest",
 ]
 
@@ -39,43 +857,26 @@ company = "Team E1"
 path = "src"
 ```
 
-## .gitignore
+## requirements.txt
 
 ```text
-.venv/
-__pycache__/
-build/
-.pytest_cache/
-*.pyc
-data/
-.reference/
-*.log
-```
+# pip install -r requirements.txt で一括インストールできるようにしたもの。
+# 内容は pyproject.toml の dependencies / dependency-groups.dev と同じバージョンにそろえている。
+# バージョンを上げるときは pyproject.toml と両方を同時に直すこと(README 9章)。
 
-## ../.gitignore
+# --- アプリ本体(APKに入るもの) ---
+flet==1.0.4
+flet-charts==1.0.4   # 内訳画面の円グラフ
+httpx==0.28.1        # APIの呼び出し
 
-```text
-# macOS
-.DS_Store
+# --- 開発・テスト用(APKには入らない) ---
+flet-cli==1.0.4
+flet-desktop==1.0.4
+flet-web==1.0.4
+pytest==9.1.1
 
-# Python
-__pycache__/
-*.pyc
-.venv/
-
-# Flet / Flutter build output
-build/
-
-# Editor
-.vscode/
-.idea/
-
-# ローカル作業・テスト生成物
-.pytest_cache/
-.reference/
-.tools/
-data/
-*.log
+# Flet WebのFastAPIラッパーと互換性のある検証済みバージョン
+fastapi==0.142.2
 ```
 
 ## run.ps1
@@ -93,7 +894,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 py -3.12 -m venv .venv
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.12をインストールするか，既存の.venvを利用してください．' }
-& "$PSScriptRoot/.venv/Scripts/python.exe" -m pip install 'flet[all]==1.0.3' 'httpx==0.28.1' 'flet-charts==1.0.3' 'pytest==9.1.1'
+& "$PSScriptRoot/.venv/Scripts/python.exe" -m pip install -r "$PSScriptRoot/requirements.txt"
 if ($LASTEXITCODE -ne 0) { throw '依存ライブラリのインストールに失敗しました．' }
 ```
 
@@ -120,6 +921,29 @@ from logic.subscriptions import normalize_keyword, validate_subscription
 import dummy_data
 
 
+"""APIの呼び出しをまとめる。各画面はここの関数だけを使い、httpx を直接呼ばない。
+
+・config.USE_DUMMY_DATA が True の間は、APIを呼ばずに dummy_data.py の内容で動く
+  (登録・編集・削除もアプリを閉じるまでは反映される)
+・USE_DUMMY_DATA が False のときは、local_db.py(docs/local_db.md)に前回の取得結果を
+  キャッシュし、サーバに接続できないときはそのキャッシュを返す
+・失敗したときは ApiError(接続できないときは ApiError のサブクラス OfflineError)を送出する。
+  画面側で except ApiError して案内を表示する
+・APIの項目名とアプリ内の項目名が違う場合は、_to_app_subscription() / _to_api_subscription()
+  の中だけで変換する(画面は直さない)
+"""
+
+import copy
+from datetime import datetime
+from urllib.parse import urlparse
+
+import httpx
+
+import config
+import dummy_data
+import local_db
+
+
 class ApiError(RuntimeError):
     """画面に表示できる保存・通信エラー．"""
 
@@ -138,15 +962,16 @@ class OfflineError(ApiError):
 
 
 # ------------------------------------------------------------------
-# サーバ設計書v0.2のAPIパス
+# APIのパス。mane_server/server_db_api.md §6 に合わせている
 # ------------------------------------------------------------------
 ENDPOINTS = {
-    "sign_up": "api/v1/signup",
-    "log_in": "api/v1/session",
-    "log_out": "api/v1/session",
-    "subscriptions": "api/v1/subscriptions",
-    "subscription": "api/v1/subscriptions/{sub_id}",
-    "services": "api/v1/services",
+    "sign_up": "/api/v1/signup",
+    "log_in": "/api/v1/session",
+    "log_out": "/api/v1/session",
+    "me": "/api/v1/me",
+    "subscriptions": "/api/v1/subscriptions",
+    "subscription": "/api/v1/subscriptions/{sub_id}",
+    "services": "/api/v1/services",
 }
 
 # ------------------------------------------------------------------
@@ -155,43 +980,60 @@ ENDPOINTS = {
 _client: httpx.Client | None = None  # ログイン状態(cookie)を保つため使い回す
 _logged_in = config.USE_DUMMY_DATA and config.DUMMY_START_LOGGED_IN
 _dummy_subs = copy.deepcopy(dummy_data.SUBSCRIPTIONS)
+_session_restored = False  # 起動後、保存していたCookieを一度だけ読み込んだか
+_HOST = urlparse(config.API_BASE_URL).hostname if config.API_BASE_URL else None
 
 
 def _http() -> httpx.Client:
     """httpx のクライアントを返す。cookie を保持するので1つを使い回す。"""
-    global _client
+    global _client, _logged_in, _session_restored
     if _client is None:
-        if not config.API_BASE_URL or "<" in config.API_BASE_URL:
-            raise ApiError("APIの接続先が未設定です．")
         _client = httpx.Client(base_url=config.API_BASE_URL, timeout=config.REQUEST_TIMEOUT)
+    if not _session_restored:
+        _session_restored = True
+        cookie = local_db.get_state("session_cookie")
+        if cookie:
+            _client.cookies.set("session_id", cookie, domain=_HOST)
+            _logged_in = True
     return _client
 
 
+def _save_session(email: str | None = None) -> None:
+    """ログイン・会員登録の直後: 受け取ったCookieと(あれば)メールアドレスを保存する。"""
+    cookie = _http().cookies.get("session_id")
+    if cookie:
+        local_db.set_state("session_cookie", cookie)
+    if email:
+        local_db.set_state("user_email", email)
+
+
 def _request(method: str, path: str, **kwargs):
-    """APIを呼び、JSONを返す。失敗したら ApiError にそろえる。"""
+    """APIを呼び、JSONを返す。通信できなければ OfflineError、APIがエラーを返したら ApiError にそろえる。"""
     global _logged_in
     try:
-        base = str(_http().base_url).rstrip("/")
-        if base.endswith("/api/v1"):
-            path = path.removeprefix("api/v1/")
-        response = _http().request(method, base + "/" + path, **kwargs)
+        response = _http().request(method, path, **kwargs)
     except httpx.TimeoutException as err:
         raise OfflineError("サーバからの応答がありません。時間をおいてもう一度お試しください。") from err
     except httpx.HTTPError as err:
         raise OfflineError("サーバに接続できません。通信環境を確認してください。") from err
     if response.status_code == 401:
+        if path == ENDPOINTS["log_in"] and method == "POST":
+            # ログイン試行そのものの401は「session切れ」ではなくメール・パスワード不一致。
+            # サーバのメッセージ(doc §6.1)をそのまま使う。
+            raise ApiError(_error_message(response))
         _logged_in = False
+        local_db.clear_user_data()
         raise ApiError("ログインの有効期限が切れました。もう一度ログインしてください。")
     if response.status_code == 404:
         raise ApiError("データが見つかりません。")
     if response.status_code >= 400:
         try:
-            body = response.json().get("error", {})
+            error = response.json().get("error", {})
         except (ValueError, AttributeError):
-            body = {}
-        body = body if isinstance(body, dict) else {}
-        raise ApiError(body.get("message") or f"サーバでエラーが起きました(コード {response.status_code})。",
-                       status_code=response.status_code, code=body.get("code"), details=body.get("details"))
+            error = {}
+        error = error if isinstance(error, dict) else {}
+        raise ApiError(_error_message(response), status_code=response.status_code,
+                       code=error.get("code"), details=error.get("details"))
     if not response.content:
         return None
     try:
@@ -200,15 +1042,22 @@ def _request(method: str, path: str, **kwargs):
         raise ApiError("サーバから想定外の応答が返りました。") from err
 
 
-def _display_time(value):
-    if not value:
-        return None
-    from logic.subscriptions import JST, parse_time
-    return parse_time(value).astimezone(JST).replace(tzinfo=None).isoformat(timespec="minutes")
+def _error_message(response: httpx.Response) -> str:
+    """{"error": {"message": ...}} の形(mane_server/server_db_api.md §5)ならその文言を使う。"""
+    try:
+        error = response.json().get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+    except ValueError:
+        message = None
+    return message or f"サーバでエラーが起きました(コード {response.status_code})。"
 
 
 def _to_app_subscription(data: dict) -> dict:
-    """APIのサブスク1件を、アプリ内で使う形にそろえる。"""
+    """APIのサブスク1件を、アプリ内で使う形にそろえる。
+
+    APIの項目名は trial_ends_at(s あり。mane_server/server_db_api.md §6.4)だが、
+    アプリ内では trial_end_at(s なし)で統一している。
+    """
     return {
         "id": data.get("id"),
         "name": data.get("name", ""),
@@ -216,23 +1065,44 @@ def _to_app_subscription(data: dict) -> dict:
         "plan_name": data.get("plan_name", ""),
         "cycle": data.get("cycle", "monthly"),
         "amount": int(data.get("amount") or 0),
-        "joined_at": _display_time(data.get("joined_at")),
+        "joined_at": data.get("joined_at"),
         "join_url": data.get("join_url", ""),
         "cancel_url": data.get("cancel_url", ""),
         "cancel_memo": data.get("cancel_memo", ""),
         "status": data.get("status", "active"),
-        "trial_end_at": _display_time(data.get("trial_ends_at", data.get("trial_end_at"))),
-        "trial_ends_at": _display_time(data.get("trial_ends_at", data.get("trial_end_at"))),
+        "trial_end_at": data.get("trial_ends_at"),
+        "trial_ends_at": data.get("trial_ends_at"),
         **{key: data.get(key) for key in ("service_id", "plan_id", "created_at", "registered_at", "next_payment_at")},
     }
 
 
 def _to_api_subscription(data: dict) -> dict:
-    """統合コードの旧トライアル項目名をサーバ仕様へ合わせる．"""
-    payload = dict(data)
-    if "trial_end_at" in payload:
-        payload["trial_ends_at"] = payload.pop("trial_end_at")
-    return payload
+    """アプリ内のサブスク1件(フラットな形)を、APIが要求する形にする。
+
+    APIは「定番サービス参照(service_id)」と「カスタム入力(custom_name 等)」を
+    別の項目として持つが、アプリ内では区別せず1つの辞書にフラットに持っている。
+    data に無いキーは省く(PATCHでその項目に触れない、という意味になる)。
+    """
+    result = {}
+    for key in ("amount", "cycle", "plan_name", "joined_at", "status"):
+        if key in data:
+            result[key] = data[key]
+    if "trial_end_at" in data:
+        result["trial_ends_at"] = data["trial_end_at"] or None
+    if "trial_ends_at" in data:
+        result["trial_ends_at"] = data["trial_ends_at"] or None
+    if data.get("plan_id"):
+        result["plan_id"] = int(data["plan_id"])
+    if "service_id" in data:
+        service_id = data["service_id"]
+        if service_id:
+            result["service_id"] = int(service_id)
+        else:
+            result["custom_name"] = data.get("name", "")
+            result["custom_join_url"] = data.get("join_url", "")
+            result["custom_cancel_url"] = data.get("cancel_url", "")
+            result["custom_cancel_memo"] = data.get("cancel_memo", "")
+    return result
 
 
 def _find_dummy(sub_id) -> dict:
@@ -247,7 +1117,9 @@ def _find_dummy(sub_id) -> dict:
 # アカウント
 # ------------------------------------------------------------------
 def is_logged_in() -> bool:
-    """ログイン済みかどうかを返す。"""
+    """ログイン済みかどうかを返す。本物のAPIのときは、保存したCookieの有無も見る。"""
+    if not config.USE_DUMMY_DATA:
+        _http()  # 保存していたCookieをまだ読んでいなければここで読む
     return _logged_in
 
 
@@ -256,6 +1128,11 @@ def sign_up(email: str, password: str) -> None:
     global _logged_in
     if not config.USE_DUMMY_DATA:
         _request("POST", ENDPOINTS["sign_up"], json={"email": email, "password": password})
+        _save_session(email)
+        refresh_services()
+    else:
+        # 本物のAPIが無くてもメールアドレスは保存する(アカウント画面の表示用)。
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
@@ -264,49 +1141,66 @@ def log_in(email: str, password: str) -> None:
     global _logged_in
     if not config.USE_DUMMY_DATA:
         _request("POST", ENDPOINTS["log_in"], json={"email": email, "password": password})
+        _save_session(email)
+        refresh_services()
+    else:
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
 def log_out() -> None:
-    """ログアウトする。"""
+    """ログアウトする。端末に残した前回のデータも消す。"""
     global _logged_in
     if not config.USE_DUMMY_DATA:
         _request("DELETE", ENDPOINTS["log_out"])
     _logged_in = False
+    local_db.clear_user_data()
 
 
 # ------------------------------------------------------------------
 # サブスク
 # ------------------------------------------------------------------
 def list_subscriptions() -> list[dict]:
-    """自分のサブスク一覧を登録順で返す。"""
+    """自分のサブスク一覧を登録順で返す。通信できなければ前回取得した一覧を返す。"""
     if config.USE_DUMMY_DATA:
         return copy.deepcopy(_dummy_subs)
-    result = _request("GET", ENDPOINTS["subscriptions"])
-    result = result.get("subscriptions") if isinstance(result, dict) else result
-    if not isinstance(result, list):
-        raise ApiError("一覧の応答形式が想定と異なります．")
-    return [_to_app_subscription(item) for item in result]
+    try:
+        response = _request("GET", ENDPOINTS["subscriptions"]) or {}
+        items = [_to_app_subscription(item) for item in response.get("subscriptions", [])]
+    except OfflineError:
+        cached = local_db.load_subscriptions()
+        if not cached:
+            raise
+        return cached
+    local_db.replace_subscriptions(items, datetime.now().astimezone().isoformat())
+    return items
 
 
 def get_subscription(sub_id) -> dict:
-    """サブスクを1件返す。"""
+    """サブスクを1件返す。通信できなければ前回取得した内容を返す。"""
     if config.USE_DUMMY_DATA:
         return copy.deepcopy(_find_dummy(sub_id))
-    return _to_app_subscription(_request("GET", ENDPOINTS["subscription"].format(sub_id=sub_id)))
+    try:
+        item = _to_app_subscription(_request("GET", ENDPOINTS["subscription"].format(sub_id=sub_id)))
+    except OfflineError:
+        cached = local_db.load_subscription(sub_id)
+        if cached is None:
+            raise
+        return cached
+    local_db.upsert_subscription(item)
+    return item
 
 
 def create_subscription(data: dict) -> dict:
-    """サブスクを登録し、登録された1件を返す。"""
+    """サブスクを登録し、登録された1件を返す。通信できないときはそのまま失敗する(あとで送る仕組みは作らない)。"""
     if config.USE_DUMMY_DATA:
         new_id = max((sub["id"] for sub in _dummy_subs), default=0) + 1
         sub = _to_app_subscription({**data, "id": new_id})
         _dummy_subs.append(sub)
         return copy.deepcopy(sub)
-    data = validate_subscription(data)
-    if data["status"] == "cancelled":
-        raise ApiError("登録時は契約中またはトライアル中を選択してください．")
-    return _to_app_subscription(_request("POST", ENDPOINTS["subscriptions"], json=registration_payload(data)))
+    item = _to_app_subscription(_request("POST", ENDPOINTS["subscriptions"], json={key: value for key, value in _to_api_subscription(data).items() if key != "status"}))
+    local_db.upsert_subscription(item)
+    return item
 
 
 def update_subscription(sub_id, data: dict) -> dict:
@@ -314,11 +1208,11 @@ def update_subscription(sub_id, data: dict) -> dict:
     if config.USE_DUMMY_DATA:
         sub = _find_dummy(sub_id)
         sub.update({key: value for key, value in data.items() if key != "id"})
-        if data.get("status") in {"active", "cancelled"}:
-            sub.update(trial_end_at=None, trial_ends_at=None, next_payment_at=None)
         return copy.deepcopy(sub)
     path = ENDPOINTS["subscription"].format(sub_id=sub_id)
-    return _to_app_subscription(_request("PATCH", path, json=update_payload(_to_api_subscription(data))))
+    item = _to_app_subscription(_request("PATCH", path, json=_to_api_subscription(data)))
+    local_db.upsert_subscription(item)
+    return item
 
 
 def delete_subscription(sub_id) -> None:
@@ -327,21 +1221,32 @@ def delete_subscription(sub_id) -> None:
         _dummy_subs.remove(_find_dummy(sub_id))
         return
     _request("DELETE", ENDPOINTS["subscription"].format(sub_id=sub_id))
+    local_db.delete_subscription(sub_id)
 
 
 # ------------------------------------------------------------------
 # 定番サービス
 # ------------------------------------------------------------------
-def search_services(keyword: str) -> list[dict]:
-    """定番サービスを名称で検索する。keyword が空なら全件。"""
+def refresh_services() -> None:
+    """定番サービスのマスタを取得し直し、オフライン検索用に保存する(ログイン直後に呼ぶ)。"""
     if config.USE_DUMMY_DATA:
-        word = normalize_keyword(keyword or "")
-        return [copy.deepcopy(s) for s in dummy_data.SERVICES if word in normalize_keyword(s["name"])]
-    result = _request("GET", ENDPOINTS["services"], params={"q": keyword})
-    result = result.get("services") if isinstance(result, dict) else result
-    if not isinstance(result, list):
-        raise ApiError("サービス検索の応答形式が想定と異なります．")
-    return result
+        return
+    try:
+        services = (_request("GET", ENDPOINTS["services"]) or {}).get("services", [])
+    except OfflineError:
+        return
+    local_db.replace_services(services)
+
+
+def search_services(keyword: str) -> list[dict]:
+    """定番サービスを名称で検索する。keyword が空なら全件。通信できなければ前回のマスタから探す。"""
+    if config.USE_DUMMY_DATA:
+        word = (keyword or "").strip().lower()
+        return [copy.deepcopy(s) for s in dummy_data.SERVICES if word in s["name"].lower()]
+    try:
+        return (_request("GET", ENDPOINTS["services"], params={"q": keyword}) or {}).get("services", [])
+    except OfflineError:
+        return local_db.search_services(keyword or "")
 
 
 def icon_url(icon: str | None) -> str | None:
@@ -353,7 +1258,33 @@ def icon_url(icon: str | None) -> str | None:
     return icon
 
 
-# 単独試作の互換API．共通画面は上記のモジュール関数を利用する．
+# ------------------------------------------------------------------
+# 端末ごとの設定(ログアウトしても残る)
+# ------------------------------------------------------------------
+def get_yearly_mode() -> str:
+    """年額プランの計上方法("billing"=更新月に全額 / "average"=月割り)。内訳画面が使う。"""
+    return local_db.get_state("yearly_mode", "billing")
+
+
+def set_yearly_mode(mode: str) -> None:
+    """年額プランの計上方法を端末に保存する。"""
+    local_db.set_state("yearly_mode", mode)
+
+
+def last_updated() -> str | None:
+    """前回 list_subscriptions() でサーバから取得できた時刻(ISO文字列)。取得したことがなければ None。"""
+    return local_db.get_state("subscriptions_fetched_at")
+
+
+def get_user_email() -> str | None:
+    """ログイン中のメールアドレスを返す(会員登録・ログインの直後に保存したもの)。
+
+    ダミーデータのまま(signup/log_in を呼んでいない)場合は None。
+    """
+    return local_db.get_state("user_email")
+
+
+# 旧単独試作の互換クライアント．共通画面ではモジュール関数を利用する．
 class ApiClient:
     """asyncメソッドで画面を止めずに保存や通信を行う．"""
 
@@ -514,78 +1445,31 @@ class ApiClient:
 ## src/components/app_header.py
 
 ```python
-"""ヘッダー。タブ画面ではアプリ名、それ以外の画面では戻るボタンと画面名を出す。"""
-
+"""画面幅を取りすぎない共通ヘッダー．追加操作はホームの主操作にまとめる．"""
 import flet as ft
-
 import navigation
 import theme
 
 
-def app_header(page: ft.Page, title: str | None = None, show_back: bool = False, show_actions: bool = True) -> ft.Control:
-    """ヘッダーを返す(main.py が全画面に付ける)。
-
-    title        : 画面名。None ならアプリ名「サブマネ」を出す
-    show_back    : 戻るボタンを出すか
-    show_actions : 右側の「追加」とアカウントボタンを出すか
-    """
-    left = []
+def app_header(page, title=None, show_back=False, show_actions=True):
+    controls = []
     if show_back:
-        left.append(
-            ft.IconButton(
-                icon=ft.Icons.ARROW_BACK,
-                icon_color=theme.INK,
-                tooltip="戻る",
-                width=theme.TAP_MIN,
-                height=theme.TAP_MIN,
-                on_click=lambda e: navigation.go_back(page),
-            )
-        )
-    if title:
-        left.append(theme.text(title, size=18, weight="bold"))
+        controls.append(ft.IconButton(icon=ft.Icons.ARROW_BACK_ROUNDED,
+            width=44, height=44, icon_color=theme.INK, tooltip='戻る',
+            on_click=lambda e: navigation.go_back(page)))
     else:
-        left.append(theme.text("サブマネ", size=22, weight="black"))
-
-    right = []
+        controls.append(ft.Container(width=34, height=34, border_radius=11, bgcolor=theme.ACCENT,
+            alignment=ft.Alignment.CENTER,
+            content=ft.Icon(ft.Icons.SUBSCRIPTIONS_OUTLINED, color=theme.ON_ACCENT, size=19)))
+    controls.append(theme.text(title or 'サブマネ', size=18 if title else 21, weight='bold',
+        expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
     if show_actions:
-        right = [
-            ft.FilledButton(
-                content="追加",
-                icon=ft.Icons.ADD,
-                height=theme.TAP_MIN,
-                bgcolor=theme.ACCENT,
-                color=theme.ON_ACCENT,
-                icon_color=theme.ON_ACCENT,
-                style=ft.ButtonStyle(
-                    text_style=ft.TextStyle(font_family=theme.FONT_BOLD, size=14),
-                    padding=ft.Padding.only(left=12, right=16),
-                ),
-                on_click=lambda e: navigation.go(page, navigation.REGISTER),
-            ),
-            ft.Container(
-                width=theme.TAP_MIN,
-                height=theme.TAP_MIN,
-                border_radius=theme.TAP_MIN / 2,
-                bgcolor=theme.SURFACE,
-                border=ft.Border.all(1, theme.LINE),
-                alignment=ft.Alignment.CENTER,
-                tooltip="アカウント",
-                content=ft.Icon(ft.Icons.PERSON_OUTLINE, size=22, color=theme.INK),
-                on_click=lambda e: navigation.go(page, navigation.ACCOUNT),
-            ),
-        ]
-
-    return ft.Container(
-        padding=ft.Padding.only(left=8 if show_back else theme.GUTTER, right=theme.GUTTER, top=12),
-        content=ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.Row(controls=left, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ft.Row(controls=right, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ],
-        ),
-    )
+        controls.append(ft.IconButton(icon=ft.Icons.PERSON_OUTLINE_ROUNDED, icon_color=theme.INK,
+            width=44, height=44, tooltip='アカウント', bgcolor=theme.SURFACE,
+            on_click=lambda e: navigation.go(page, navigation.ACCOUNT)))
+    return ft.Container(bgcolor=theme.GROUND,
+        padding=ft.Padding.only(left=8 if show_back else 16, right=16, top=8, bottom=4),
+        content=ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=controls))
 ```
 
 ## src/components/feedback.py
@@ -647,106 +1531,58 @@ def error_panel(page: ft.Page, message: str) -> ft.Control:
 ## src/components/service_icon.py
 
 ```python
-"""サービスのアイコン。状態(無料トライアル中 / 解約済み)の見た目もここでそろえる。
-
-アイコンを表示する画面は必ずこの部品を使う:
-    from components.service_icon import service_icon
-    service_icon(sub)             # ホームと同じ72px
-    service_icon(sub, size=44)    # 一覧の行など小さく出すとき
-"""
-
+"""ロゴの全体と色を保ち，契約状態は外側のバッジで表示する．"""
 from zlib import crc32
 import flet as ft
-
 import api_client
 import theme
+from service_assets import bundled_icon
 
-BADGE_SIZE = 30      # トライアルの時計バッジ(外周の縁取りを含む)
-BADGE_OVERHANG = 8   # バッジがタイルからはみ出す量
-
-
-def footprint(size: float = 72) -> tuple[float, float]:
-    """service_icon が占める (幅, 高さ) を返す。バッジのはみ出し分を含む。"""
-    return size + BADGE_OVERHANG * 2, size + BADGE_OVERHANG
+BADGE_SIZE = 24
+BADGE_OVERHANG = 6
 
 
-def service_icon(sub: dict, size: float = 72, color_index: int | None = None, ring_color: str = theme.GROUND) -> ft.Control:
-    """サブスク1件のアイコンを返す。
+def footprint(size=72):
+    return size + BADGE_OVERHANG, size + BADGE_OVERHANG
 
-    sub         : サブスク1件(name / icon / status を使う)
-    size        : タイルの一辺(px)
-    color_index : アイコン画像がないときのタイル色の番号(theme.TILE_COLORS)
-    ring_color  : バッジの縁取り色。アイコンを置く場所の背景色に合わせる
-    """
+
+def service_icon(sub, size=72, color_index=None, ring_color=theme.GROUND):
+    """API画像を優先し，通信失敗時も同梱ロゴか頭文字を表示する．"""
+    cancelled = sub.get('status') == 'cancelled'
+    trial = sub.get('status') == 'trial'
+    name = sub.get('name') or '?'
     if color_index is None:
-        identity = str(sub.get("service_id") or sub.get("id") or sub.get("name") or "?")
-        color_index = crc32(identity.encode("utf-8"))
-    cancelled = sub.get("status") == "cancelled"
-    trial = sub.get("status") == "trial"
-    radius = round(size * 0.28)
-    name = sub.get("name") or "?"
-
-    # 画像がない(または読み込めない)ときは、頭文字のタイルを出す
-    monogram = ft.Container(
-        width=size,
-        height=size,
-        border_radius=radius,
-        bgcolor=theme.OFF_FILL if cancelled else theme.tile_color(color_index),
-        alignment=ft.Alignment.CENTER,
-        content=theme.text(
-            name[0],
-            size=round(size * 0.42),
-            weight="black",
-            color=theme.OFF_INK if cancelled else theme.ON_ACCENT,
-        ),
-    )
-
-    url = api_client.icon_url(sub.get("icon"))
-    if url:
-        image = ft.Image(src=url, width=size, height=size, fit=ft.BoxFit.COVER, error_content=monogram)
-        if cancelled:  # 解約済みは白黒にして薄くする
-            image.color = theme.OFF_FILL
-            image.color_blend_mode = ft.BlendMode.SATURATION
-            image.opacity = 0.55
-        tile = ft.Container(
-            width=size,
-            height=size,
-            border_radius=radius,
-            bgcolor=theme.OFF_FILL if cancelled else theme.SURFACE,
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            content=image,
-        )
+        color_index = crc32(str(sub.get('id') or name).encode('utf-8'))
+    letter = ft.Container(width=size, height=size, border_radius=18,
+        bgcolor=theme.tile_color(color_index), alignment=ft.Alignment.CENTER,
+        content=theme.text(name[0], size=round(size * .4), weight='bold', color=theme.ON_ACCENT))
+    local = bundled_icon(sub)
+    local_image = ft.Image(src=local, width=size - 12, height=size - 12,
+                          fit=ft.BoxFit.CONTAIN, error_content=letter) if local else letter
+    remote = sub.get('icon')
+    # ダミー中はサーバ不要で使える同梱画像を優先する．
+    import config
+    if remote and not (config.USE_DUMMY_DATA and local):
+        image = ft.Image(src=api_client.icon_url(remote), width=size - 12, height=size - 12,
+                         fit=ft.BoxFit.CONTAIN, error_content=local_image)
     else:
-        tile = monogram
-
-    tile.left = BADGE_OVERHANG
-    tile.top = BADGE_OVERHANG
+        image = local_image
+    tile = ft.Container(width=size, height=size, bgcolor=theme.SURFACE,
+        border_radius=18, border=ft.Border.all(1, theme.LINE), alignment=ft.Alignment.CENTER,
+        content=image, tooltip=name)
     controls = [tile]
-
-    if trial:
-        scale = min(1.0, size / 72)
-        badge = round(BADGE_SIZE * max(scale, 0.7))
-        controls.append(
-            ft.Container(
-                width=badge,
-                height=badge,
-                right=0,
-                top=0,
-                border_radius=badge / 2,
-                bgcolor=theme.TRIAL,
-                border=ft.Border.all(3, ring_color),
-                alignment=ft.Alignment.CENTER,
-                content=ft.Icon(ft.Icons.ACCESS_TIME, size=round(badge * 0.5), color=theme.ON_ACCENT),
-            )
-        )
-
+    if trial or cancelled:
+        controls.append(ft.Container(width=BADGE_SIZE, height=BADGE_SIZE, right=0, bottom=0,
+            bgcolor=theme.OFF_INK if cancelled else theme.TRIAL,
+            border_radius=12, border=ft.Border.all(2, ring_color), alignment=ft.Alignment.CENTER,
+            content=ft.Icon(ft.Icons.CHECK if cancelled else ft.Icons.ACCESS_TIME,
+                            size=13, color=theme.ON_ACCENT)))
     width, height = footprint(size)
     return ft.Stack(width=width, height=height, controls=controls)
 
 
-def status_label(sub: dict) -> str:
-    """状態を表す短い文言を返す(読み上げや補足表示用)。契約中は空文字。"""
-    return {"trial": "無料トライアル中", "cancelled": "解約済み"}.get(sub.get("status"), "")
+def status_label(sub):
+    return {'trial': '無料トライアル中', 'cancelled': '解約済み'}.get(sub.get('status'), '')
 ```
 
 ## src/components/status_actions.py
@@ -911,13 +1747,16 @@ DUMMY_START_LOGGED_IN = True
 """
 
 
+from service_assets import bundled_icon
+
+
 def _sub(sub_id, name, cycle, amount, joined_at, status="active", trial_end_at=None, plan_name=None):
     """ダミーのサブスク1件を作る。"""
     slug = f"service-{sub_id}"
     return {
         "id": sub_id,
         "name": name,
-        "icon": None,  # APIからアイコンURLを受け取るまでは頭文字のタイルを表示
+        "icon": bundled_icon({"name": name}),  # 授業用モックでも同梱画像を表示
         "plan_name": plan_name or ("月額プラン" if cycle == "monthly" else "年額プラン"),
         "cycle": cycle,
         "amount": amount,
@@ -958,7 +1797,7 @@ SERVICES = [
     {
         "id": sub["id"],
         "name": sub["name"],
-        "icon": None,
+        "icon": sub["icon"],
         "join_url": sub["join_url"],
         "cancel_url": sub["cancel_url"],
         "cancel_memo": sub["cancel_memo"],
@@ -980,6 +1819,174 @@ SERVICES = [
      "cancel_memo": "パスワードの準備が必要です．",
      "plans": [{"name": "月額プラン（デモ）", "cycle": "monthly", "amount": 500}]},
 ]
+```
+
+## src/local_db.py
+
+```python
+"""端末内の SQLite(ログイン状態・設定・前回取得したデータのキャッシュ)。
+
+docs/local_db.md(元の設計: docs/client_db.md)の実装。呼ぶのは api_client.py だけにし、
+画面(views/)からは直接使わない。
+"""
+
+import json
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+_db_path: Path | None = None
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS subscriptions_cache (
+  id INTEGER PRIMARY KEY, position INTEGER NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS services_cache (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_kana TEXT, data TEXT NOT NULL);
+"""
+
+# ログアウトしても残すキー(端末の設定)
+_KEEP_ON_LOGOUT = {"yearly_mode"}
+
+
+def _default_path() -> Path:
+    """DBファイルの場所を決める。"""
+    base = os.getenv("FLET_APP_STORAGE_DATA")
+    folder = Path(base) if base else Path.home() / ".submane"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "submane.db"
+
+
+def init_db(path: Path | None = None) -> None:
+    """起動時に1回呼ぶ。テストでは一時ファイルのパスを渡す。"""
+    global _db_path
+    _db_path = path or _default_path()
+    with closing(sqlite3.connect(_db_path)) as con, con:
+        version = con.execute("PRAGMA user_version").fetchone()[0]
+        if version != SCHEMA_VERSION:
+            # キャッシュなので、版が変わったら作り直す(設定は消える)
+            for table in ("app_state", "subscriptions_cache", "services_cache"):
+                con.execute(f"DROP TABLE IF EXISTS {table}")
+        con.executescript(_SCHEMA)
+        con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _connect() -> sqlite3.Connection:
+    """呼ぶたびに新しい接続を開く(スレッドをまたいで使い回さない)。"""
+    if _db_path is None:
+        raise RuntimeError("init_db() を先に呼んでください")
+    con = sqlite3.connect(_db_path)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+# ---------- ログイン状態・設定 ----------
+
+def get_state(key: str, default: str | None = None) -> str | None:
+    """app_state から値を読む。"""
+    with closing(_connect()) as con:
+        row = con.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_state(key: str, value: str | None) -> None:
+    """app_state に値を書く。None なら削除。"""
+    with closing(_connect()) as con, con:
+        if value is None:
+            con.execute("DELETE FROM app_state WHERE key = ?", (key,))
+        else:
+            con.execute(
+                "INSERT INTO app_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+
+def clear_user_data() -> None:
+    """ログアウト・401 のときに呼ぶ。設定以外をすべて消す。"""
+    keep = ",".join("?" * len(_KEEP_ON_LOGOUT))
+    with closing(_connect()) as con, con:
+        con.execute(f"DELETE FROM app_state WHERE key NOT IN ({keep})", tuple(_KEEP_ON_LOGOUT))
+        con.execute("DELETE FROM subscriptions_cache")
+        con.execute("DELETE FROM services_cache")
+
+
+# ---------- 契約 ----------
+
+def replace_subscriptions(items: list[dict], fetched_at: str) -> None:
+    """一覧を丸ごと置き換える(GET /subscriptions の結果)。"""
+    with closing(_connect()) as con, con:
+        con.execute("DELETE FROM subscriptions_cache")
+        con.executemany(
+            "INSERT INTO subscriptions_cache (id, position, status, data) VALUES (?, ?, ?, ?)",
+            [(s["id"], i, s["status"], json.dumps(s, ensure_ascii=False))
+             for i, s in enumerate(items)],
+        )
+        # set_state() は別接続を開くため、同じトランザクション内では直接書く
+        con.execute(
+            "INSERT INTO app_state (key, value) VALUES ('subscriptions_fetched_at', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (fetched_at,),
+        )
+
+
+def upsert_subscription(item: dict) -> None:
+    """登録・編集が成功したあと、その1件だけ反映する。"""
+    with closing(_connect()) as con, con:
+        row = con.execute("SELECT position FROM subscriptions_cache WHERE id = ?", (item["id"],)).fetchone()
+        if row:
+            position = row["position"]
+        else:
+            position = con.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM subscriptions_cache").fetchone()[0]
+        con.execute(
+            "INSERT OR REPLACE INTO subscriptions_cache (id, position, status, data) VALUES (?, ?, ?, ?)",
+            (item["id"], position, item["status"], json.dumps(item, ensure_ascii=False)),
+        )
+
+
+def delete_subscription(sub_id) -> None:
+    """削除が成功したあと、その1件を消す。"""
+    with closing(_connect()) as con, con:
+        con.execute("DELETE FROM subscriptions_cache WHERE id = ?", (sub_id,))
+
+
+def load_subscriptions() -> list[dict]:
+    """前回取得した一覧(登録順)。"""
+    with closing(_connect()) as con:
+        rows = con.execute("SELECT data FROM subscriptions_cache ORDER BY position").fetchall()
+    return [json.loads(r["data"]) for r in rows]
+
+
+def load_subscription(sub_id) -> dict | None:
+    """前回取得した1件。"""
+    with closing(_connect()) as con:
+        row = con.execute("SELECT data FROM subscriptions_cache WHERE id = ?", (sub_id,)).fetchone()
+    return json.loads(row["data"]) if row else None
+
+
+# ---------- 定番サービス ----------
+
+def replace_services(items: list[dict]) -> None:
+    """マスタを丸ごと置き換える(GET /services の q なしの結果)。"""
+    with closing(_connect()) as con, con:
+        con.execute("DELETE FROM services_cache")
+        con.executemany(
+            "INSERT INTO services_cache (id, name, name_kana, data) VALUES (?, ?, ?, ?)",
+            [(s["id"], s["name"], s.get("name_kana"), json.dumps(s, ensure_ascii=False)) for s in items],
+        )
+
+
+def search_services(keyword: str) -> list[dict]:
+    """オフライン時の名称検索(名前・読みの部分一致)。"""
+    like = f"%{keyword}%"
+    with closing(_connect()) as con:
+        rows = con.execute(
+            "SELECT data FROM services_cache WHERE name LIKE ? OR name_kana LIKE ? ORDER BY name",
+            (like, like),
+        ).fetchall()
+    return [json.loads(r["data"]) for r in rows]
 ```
 
 ## src/logic/__init__.py
@@ -1054,18 +2061,28 @@ def update_payload(data):
 """
 
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 CYCLE_MONTHS = {"monthly": 1, "yearly": 12}
 
+# このモジュールの内部では、日時は常に「オフセット無し・日本時間」で統一する
+# (datetime.now() もオフセット無しなので、比較できるようにそろえる必要がある)。
+# 本物のAPIは "+09:00" 付きで返す(mane_server/server_db_api.md §5)ので、
+# 受け取った時点で日本時間に変換しオフセットを外す。ダミーデータはもともとオフセット無し。
+JST = timezone(timedelta(hours=9))
+
 
 def parse_datetime(value) -> datetime | None:
-    """ "2026-09-20T21:00" のような文字列を datetime にする。空なら None。"""
+    """ "2026-09-20T21:00" のような文字列を datetime にする。空なら None。
+
+    オフセット付きの値(本物のAPI)は日本時間に変換してからオフセットを外す。
+    """
     if not value:
         return None
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(value)
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(JST).replace(tzinfo=None)
+    return parsed
 
 
 def add_months(base: datetime, months: int) -> datetime:
@@ -1379,6 +2396,7 @@ from typing import Callable
 import flet as ft
 
 import api_client
+import local_db
 import navigation
 import theme
 from components import feedback
@@ -1420,7 +2438,7 @@ def _resolve(route: str) -> Screen | None:
 
 def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Control | None) -> ft.View:
     """ヘッダー + 中身 + 下部タブ を1つの画面(View)にまとめる。"""
-    controls = [header, ft.Container(content=content, expand=True)]
+    controls = [header, ft.Container(content=content, expand=True, padding=ft.Padding.symmetric(horizontal=theme.GUTTER, vertical=16))]
     if footer:
         controls.append(footer)
     return ft.View(
@@ -1445,6 +2463,7 @@ def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Contr
 
 def main(page: ft.Page) -> None:
     """アプリの入口。"""
+    local_db.init_db()
     page.title = "サブマネ"
     theme.apply(page)
 
@@ -1598,6 +2617,43 @@ def set_reload_handler(page: ft.Page, handler) -> None:
     page.session.store.set(_RELOAD_KEY, handler)
 ```
 
+## src/service_assets.py
+
+```python
+"""授業用に同梱したサービスロゴの参照．画像の原本・出典はassets/iconsに保存．"""
+import json
+from functools import lru_cache
+from pathlib import Path
+import unicodedata
+
+
+def normalize_name(value):
+    return unicodedata.normalize('NFKC', str(value or '')).casefold().replace(' ', '').replace('　', '')
+
+
+@lru_cache(maxsize=1)
+def logo_catalog():
+    path = Path(__file__).parent / 'assets/icons/sources.json'
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def bundled_icon(subscription):
+    """サービスIDの有無に依存せず，slugか名称から同梱画像を返す．"""
+    catalog = logo_catalog()
+    slug = subscription.get('slug')
+    if slug in catalog and catalog[slug].get('filename'):
+        return 'icons/' + catalog[slug]['filename']
+    name = normalize_name(subscription.get('name'))
+    aliases = {'adobecreativecloud': 'adobe-cc', 'amazonprime': 'amazon-prime',
+               'amazonプライム': 'amazon-prime', 'youtube': 'youtube-premium',
+               'fod': 'fod-premium', 'abema': 'abema-premium'}
+    slug = aliases.get(name)
+    if slug is None:
+        slug = next((key for key, item in catalog.items() if normalize_name(item.get('name')) == name), None)
+    item = catalog.get(slug, {})
+    return 'icons/' + item['filename'] if item.get('filename') else None
+```
+
 ## src/theme.py
 
 ```python
@@ -1606,13 +2662,13 @@ def set_reload_handler(page: ft.Page, handler) -> None:
 import flet as ft
 
 # ---- 色 ----
-GROUND = "#F3F5F4"       # 画面の地色
+GROUND = "#F5F7F6"       # 画面の地色
 SURFACE = "#FFFFFF"      # ボタン、タブバー、カード
 INK = "#14201C"          # 本文
 INK_SUB = "#4A5552"      # 補足テキスト
-LINE = "#D3D8D6"         # 枠線
-ACCENT = "#0E6B5C"       # 主要ボタン、選択中の表示
-ACCENT_SOFT = "#DCEBE7"  # 選択中タブの背景
+LINE = "#E0E7E3"         # 枠線
+ACCENT = "#146C5A"       # 主要ボタン、選択中の表示
+ACCENT_SOFT = "#E0F0E8"  # 選択中タブの背景
 TRIAL = "#B45309"        # 無料トライアルのバッジ
 OFF_FILL = "#D3D8D6"     # 解約済みアイコンの面
 OFF_INK = "#5A6360"      # 解約済みの文字
@@ -1628,7 +2684,7 @@ TILE_COLORS = [
 ]
 
 # ---- 寸法 ----
-GUTTER = 24        # 画面左右の余白
+GUTTER = 16        # 画面左右の余白
 TAP_MIN = 44       # タップできる要素の最小サイズ
 BASE_WIDTH = 390   # 基準の画面幅
 BASE_HEIGHT = 844
@@ -1680,18 +2736,120 @@ def yen(amount: int) -> str:
 ```python
 """会員登録・ログイン画面(担当: 西内)。
 
-いまは画面の切り替えを確認するための仮置き。担当者がこのファイルを書き換える。
-関数名 account_view と引数(page)は main.py が使うので変えないこと。
+ログイン済みなら自分の情報(メールアドレス)とログアウトボタンを、
+未ログインなら新規登録・ログインを切り替えられるフォームを返す。
 """
 
 import flet as ft
 
+import api_client
+import navigation
+import theme
+from api_client import ApiError
 from components import feedback
 
 
 def account_view(page: ft.Page) -> ft.Control:
     """会員登録・ログイン画面の中身を返す。"""
-    return feedback.message_panel("会員登録・ログイン画面は準備中です。\n(担当: 西内)", icon=ft.Icons.CONSTRUCTION)
+    if api_client.is_logged_in():
+        return _signed_in_view(page)
+    return _sign_in_view(page)
+
+
+def _signed_in_view(page: ft.Page) -> ft.Control:
+    """ログイン済みのときの中身。"""
+    email = api_client.get_user_email() or "ダミーデータでログイン中"
+
+    def log_out(event):
+        api_client.log_out()
+        navigation.reload(page)
+
+    return ft.Column(
+        spacing=16,
+        controls=[
+            theme.text("ログイン中", size=26, weight="bold"),
+            theme.text(email, size=14, color=theme.INK_SUB),
+            ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN),
+        ],
+    )
+
+
+def _sign_in_view(page: ft.Page) -> ft.Control:
+    """未ログインのときの中身(新規登録・ログインを切り替えるフォーム)。"""
+    state = {"mode": "login", "busy": False}
+    message = ft.Text("", color=theme.ERROR)
+    email_field = ft.TextField(label="メールアドレス", keyboard_type=ft.KeyboardType.EMAIL)
+    password_field = ft.TextField(label="パスワード", password=True, can_reveal_password=True,
+                                  helper="8文字以上")
+    title = theme.text("ログイン", size=26, weight="bold")
+    toggle_button = ft.TextButton("はじめての方はこちら(新規登録)")
+    submit_button = feedback.primary_button("ログイン", on_click=lambda e: submit(e))
+
+    def apply_mode():
+        """今のモード(login/signup)に合わせて文言を変える。"""
+        is_signup = state["mode"] == "signup"
+        title.value = "新規登録" if is_signup else "ログイン"
+        toggle_button.content = "登録済みの方はこちら(ログイン)" if is_signup else "はじめての方はこちら(新規登録)"
+        submit_button.content = "新規登録" if is_signup else "ログイン"
+        page.update()
+
+    def toggle_mode(event):
+        state["mode"] = "signup" if state["mode"] == "login" else "login"
+        message.value = ""
+        email_field.error = None
+        password_field.error = None
+        apply_mode()
+
+    toggle_button.on_click = toggle_mode
+
+    def submit(event):
+        if state["busy"]:
+            return
+        email_field.error = None
+        password_field.error = None
+        message.value = ""
+        if not (email_field.value or "").strip():
+            email_field.error = "入力してください．"
+        if not password_field.value:
+            password_field.error = "入力してください．"
+        elif len(password_field.value) < 8:
+            password_field.error = "8文字以上で入力してください．"
+        if email_field.error or password_field.error:
+            page.update()
+            return
+
+        state["busy"] = True
+        submit_button.disabled = True
+        toggle_button.disabled = True
+        page.update()
+        try:
+            if state["mode"] == "signup":
+                api_client.sign_up(email_field.value.strip(), password_field.value)
+            else:
+                api_client.log_in(email_field.value.strip(), password_field.value)
+        except ApiError as error:
+            message.value = str(error)
+        else:
+            navigation.go(page, navigation.HOME)
+            return
+        finally:
+            state["busy"] = False
+            submit_button.disabled = False
+            toggle_button.disabled = False
+            page.update()
+
+    return ft.Column(
+        spacing=16,
+        controls=[
+            title,
+            theme.text("サブマネを使うには会員登録またはログインしてください．", color=theme.INK_SUB),
+            email_field,
+            password_field,
+            message,
+            submit_button,
+            toggle_button,
+        ],
+    )
 ```
 
 ## src/views/breakdown.py
@@ -1717,7 +2875,6 @@ from logic import payments
 
 MAX_SECTIONS = 6          # 円グラフで個別に出す件数。残りは「その他」にまとめる
 OTHERS_COLOR = theme.OFF_INK
-_MODE_KEY = "breakdown.yearly_mode"
 _MODE_LABELS = {
     payments.MODE_BILLING: "年額は更新月に計上",
     payments.MODE_AVERAGE: "年額を月割り",
@@ -1821,7 +2978,7 @@ def breakdown_view(page: ft.Page) -> ft.Control:
     state = {
         "year": now.year,
         "month": now.month,
-        "mode": page.session.store.get(_MODE_KEY) or payments.MODE_BILLING,
+        "mode": api_client.get_yearly_mode(),
     }
     body = ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
@@ -1921,7 +3078,7 @@ def breakdown_view(page: ft.Page) -> ft.Control:
         if not selected:
             return
         state["mode"] = selected[0]
-        page.session.store.set(_MODE_KEY, state["mode"])  # アプリを閉じるまで選択を覚えておく
+        api_client.set_yearly_mode(state["mode"])  # 端末に保存し、次回起動後も覚えておく
         render()
         page.update()
 
@@ -2168,286 +3325,128 @@ def detail_view(page: ft.Page) -> ft.Control:
 ## src/views/home.py
 
 ```python
-"""ホーム画面(担当: 玉造)。契約中サブスクのアイコン一覧。
-
-・4列 x 3行 = 1ページ12件。横スワイプ(ft.PageView)でページを送る
-・無料トライアル中は時計バッジ、解約済みはグレーアウト(components/service_icon.py)
-・並び順は「更新頻度順」「登録順」。どちらでも解約済みは末尾(logic/ordering.py)
-・アイコンをタップすると詳細画面へ移る
-"""
-
+"""スマホでサービス名と状態が読める，3列・12件のホーム画面．"""
 import math
-
 import flet as ft
-
 import api_client
 import navigation
 import theme
 from components import feedback
-from components.service_icon import footprint, service_icon, status_label
+from components.service_icon import service_icon, status_label
 from logic import ordering
 
-COLUMNS = 4
-ROWS = 3
+COLUMNS = 3
+ROWS = 4
 PER_PAGE = COLUMNS * ROWS
-SIDE_PADDING = 16   # 一覧の左右余白(バッジのはみ出し分があるので GUTTER より少し狭い)
-NAME_HEIGHT = 20    # サービス名の行の高さ
-ROW_GAP = 18        # 行と行の間
 
 
-def _icon_size(page: ft.Page) -> int:
-    """画面幅に合わせたアイコンの大きさを返す(基準幅390pxで72px)。"""
-    width = page.width or theme.BASE_WIDTH
-    cell = (min(width, 430) - SIDE_PADDING * 2) / COLUMNS
-    return int(max(48, min(72, cell - 17)))
+def _stat(label, value, color):
+    return ft.Container(expand=True, bgcolor=theme.SURFACE, padding=12, border_radius=14,
+        border=ft.Border.all(1, theme.LINE), content=ft.Column(spacing=3, controls=[
+            theme.text(str(value), size=23, weight='bold', color=color),
+            theme.text(label, size=11, color=theme.INK_SUB)]))
 
 
-def _tile(page: ft.Page, sub: dict, size: int, color_index: int) -> ft.Control:
-    """アイコン + サービス名の1マスを返す。タップで詳細画面へ。"""
-    cancelled = sub.get("status") == "cancelled"
+def _tile(page, sub, size=64):
+    cancelled = sub.get('status') == 'cancelled'
     state = status_label(sub)
-    label = f"{sub['name']}({state})の詳細を開く" if state else f"{sub['name']}の詳細を開く"
-    return ft.Container(
-        expand=1,
-        on_click=lambda e: navigation.go_detail(page, sub["id"]),
-        content=ft.Semantics(
-            label=label,
-            button=True,
-            content=ft.Column(
-                spacing=6,
-                tight=True,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    service_icon(sub, size=size, color_index=color_index),
-                    ft.Container(
-                        height=NAME_HEIGHT,
-                        padding=ft.Padding.symmetric(horizontal=2),
-                        alignment=ft.Alignment.CENTER,
-                        content=theme.text(
-                            sub["name"],
-                            size=12,
-                            color=theme.OFF_INK if cancelled else theme.INK,
-                            max_lines=1,
-                            overflow=ft.TextOverflow.ELLIPSIS,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                    ),
-                ],
-            ),
-        ),
-    )
+    return ft.Container(expand=1, padding=ft.Padding.symmetric(vertical=10, horizontal=3),
+        border_radius=16, bgcolor=theme.SURFACE, border=ft.Border.all(1, theme.LINE),
+        on_click=lambda e: navigation.go_detail(page, sub['id']),
+        content=ft.Semantics(button=True, label=f"{sub['name']} {state} 詳細を開く",
+            content=ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                service_icon(sub, size=size, ring_color=theme.SURFACE),
+                ft.Container(height=38, alignment=ft.Alignment.CENTER,
+                    content=theme.text(sub['name'], size=12, weight='bold', max_lines=2,
+                        overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER,
+                        color=theme.OFF_INK if cancelled else theme.INK)),
+                theme.text('解約済み' if cancelled else ('トライアル中' if sub.get('status') == 'trial'
+                           else f"{theme.yen(int(sub.get('amount') or 0))} / {'月' if sub.get('cycle') == 'monthly' else '年'}"),
+                    size=10, color=theme.TRIAL if sub.get('status') == 'trial' else theme.INK_SUB,
+                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+            ])))
 
 
-def _row_height(size: int) -> int:
-    """一覧1行分の高さを返す。"""
-    return int(footprint(size)[1]) + 6 + NAME_HEIGHT
-
-
-def _build_pages(page: ft.Page, subs: list[dict], size: int, color_index: dict) -> list[ft.Control]:
-    """並び替え済みのサブスクを、12件ずつのページに分けて返す。"""
+def _build_pages(page, subscriptions, size):
     pages = []
-    for start in range(0, len(subs), PER_PAGE):
-        chunk = subs[start:start + PER_PAGE]
+    for start in range(0, len(subscriptions), PER_PAGE):
+        chunk = subscriptions[start:start + PER_PAGE]
         rows = []
-        for row_start in range(0, len(chunk), COLUMNS):
-            cells = [_tile(page, sub, size, color_index[sub["id"]]) for sub in chunk[row_start:row_start + COLUMNS]]
-            cells += [ft.Container(expand=1) for _ in range(COLUMNS - len(cells))]  # 端数の行を左詰めにする
-            rows.append(ft.Row(controls=cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.START))
-        pages.append(
-            ft.Container(
-                padding=ft.Padding.symmetric(horizontal=SIDE_PADDING),
-                content=ft.Column(controls=rows, spacing=ROW_GAP),
-            )
-        )
+        for index in range(0, len(chunk), COLUMNS):
+            tiles = [_tile(page, sub, size) for sub in chunk[index:index + COLUMNS]]
+            tiles.extend(ft.Container(expand=1) for _ in range(COLUMNS - len(tiles)))
+            rows.append(ft.Row(controls=tiles, spacing=8, vertical_alignment=ft.CrossAxisAlignment.START))
+        pages.append(ft.Column(controls=rows, spacing=8))
     return pages
 
 
-def _legend() -> ft.Control:
-    """バッジとグレー表示の意味を示す凡例を返す。"""
-    return ft.Row(
-        spacing=12,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        controls=[
-            ft.Row(
-                spacing=5,
-                controls=[
-                    ft.Container(
-                        width=16,
-                        height=16,
-                        border_radius=8,
-                        bgcolor=theme.TRIAL,
-                        alignment=ft.Alignment.CENTER,
-                        content=ft.Icon(ft.Icons.ACCESS_TIME, size=11, color=theme.ON_ACCENT),
-                    ),
-                    theme.text("トライアル中", size=11, color=theme.INK_SUB),
-                ],
-            ),
-            ft.Row(
-                spacing=5,
-                controls=[
-                    ft.Container(width=14, height=14, border_radius=4, bgcolor=theme.OFF_FILL),
-                    theme.text("解約済み", size=11, color=theme.INK_SUB),
-                ],
-            ),
-        ],
-    )
-
-
-def home_view(page: ft.Page) -> ft.Control:
-    """ホーム画面の中身を返す。"""
+def home_view(page):
     try:
         subs = api_client.list_subscriptions()
-    except api_client.ApiError as err:
-        return feedback.error_panel(page, str(err))
-
-    heading = ft.Container(
-        padding=ft.Padding.only(left=theme.GUTTER, right=theme.GUTTER, top=24),
-        content=theme.text("契約中のサブスク", size=26, weight="bold"),
-    )
-
-    if not subs:
-        return ft.Column(
-            expand=True,
-            spacing=0,
-            scroll=ft.ScrollMode.AUTO,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            controls=[
-                heading,
-                feedback.message_panel(
-                    "まだサブスクが登録されていません。\n契約中のサービスを追加すると、ここに一覧で表示されます。",
-                    button_label="サブスクを追加",
-                    on_click=lambda e: navigation.go(page, navigation.REGISTER),
-                ),
-            ],
-        )
-
+    except api_client.ApiError as error:
+        return feedback.error_panel(page, str(error))
     counts = ordering.count_by_status(subs)
-    size = _icon_size(page)
-    # タイルの色は登録順で固定し、並び替えても同じサービスは同じ色にする
-    color_index = {sub["id"]: index for index, sub in enumerate(subs)}
-    page_count = math.ceil(len(subs) / PER_PAGE)
-    rows_shown = min(ROWS, math.ceil(len(subs) / COLUMNS))
-    state = {"order": ordering.ORDER_FREQUENCY, "current": 0}
+    state = {'order': ordering.ORDER_FREQUENCY, 'current': 0}
+    size = min(72, max(52, int(((page.width or theme.BASE_WIDTH) - 48) / 3 - 30)))
+    heading = ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
+        ft.Column(spacing=3, expand=True, controls=[theme.text('マイサブスク', size=25, weight='bold'),
+            theme.text('契約と更新を，ひと目で確認．', size=12, color=theme.INK_SUB)]),
+        ft.IconButton(icon=ft.Icons.ADD_ROUNDED, bgcolor=theme.ACCENT, icon_color=theme.ON_ACCENT,
+            width=46, height=46, tooltip='サブスクを追加',
+            on_click=lambda e: navigation.go(page, navigation.REGISTER))])
+    stats = ft.Row(spacing=8, controls=[_stat('契約中', counts['active'], theme.ACCENT),
+        _stat('トライアル', counts['trial'], theme.TRIAL), _stat('解約済み', counts['cancelled'], theme.OFF_INK)])
+    if not subs:
+        return ft.Column(scroll=ft.ScrollMode.AUTO, spacing=18, controls=[heading, stats,
+            feedback.message_panel('最初のサブスクを登録しましょう．\n契約内容をまとめて確認できます．',
+                button_label='サブスクを追加', on_click=lambda e: navigation.go(page, navigation.REGISTER))])
+    count = math.ceil(len(subs) / PER_PAGE)
+    pager = ft.PageView(controls=_build_pages(page, ordering.sort_subscriptions(subs), size),
+                       height=min(ROWS, math.ceil(len(subs) / COLUMNS)) * (size + 100))
+    position = theme.text('', size=12, color=theme.INK_SUB)
+    dots = ft.Row(spacing=5, alignment=ft.MainAxisAlignment.CENTER)
+    previous = ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, tooltip='前のページ', width=44, height=44)
+    following = ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, tooltip='次のページ', width=44, height=44)
 
-    def sorted_pages() -> list[ft.Control]:
-        return _build_pages(page, ordering.sort_subscriptions(subs, state["order"]), size, color_index)
+    def refresh_position():
+        index = state['current']
+        position.value = f'{index + 1} / {count}'
+        dots.controls = [ft.Container(width=18 if i == index else 6, height=6, border_radius=3,
+            bgcolor=theme.ACCENT if i == index else theme.DOT) for i in range(count)]
+        previous.disabled = index == 0
+        following.disabled = index == count - 1
 
-    # ---- ページ位置(点と「1 / 2」) ----
-    dots = ft.Row(spacing=0, alignment=ft.MainAxisAlignment.CENTER, visible=page_count > 1)
-    page_label = theme.text("", size=12, color=theme.INK_SUB)
-
-    def show_page(index: int) -> None:
+    def go_to(index):
         page.run_task(pager.go_to_page, index, 250)
 
-    def refresh_position() -> None:
-        current = state["current"]
-        dots.controls = [
-            ft.Container(
-                width=28,
-                height=theme.TAP_MIN,
-                alignment=ft.Alignment.CENTER,
-                tooltip=f"{index + 1}ページ目を表示",
-                on_click=lambda e, index=index: show_page(index),
-                content=ft.Container(
-                    width=20 if index == current else 8,
-                    height=8,
-                    border_radius=4,
-                    bgcolor=theme.ACCENT if index == current else theme.DOT,
-                ),
-            )
-            for index in range(page_count)
-        ]
-        page_label.value = f"{current + 1} / {page_count}" if page_count > 1 else ""
+    previous.on_click = lambda e: go_to(max(0, state['current'] - 1))
+    following.on_click = lambda e: go_to(min(count - 1, state['current'] + 1))
 
-    def on_page_change(e) -> None:
-        state["current"] = int(e.control.selected_index or 0)
+    def page_changed(event):
+        state['current'] = int(event.control.selected_index or 0)
         refresh_position()
         page.update()
+    pager.on_change = page_changed
 
-    # ---- アイコン一覧(横スワイプ) ----
-    pager = ft.PageView(
-        controls=sorted_pages(),
-        height=rows_shown * _row_height(size) + (rows_shown - 1) * ROW_GAP + 4,
-        on_change=on_page_change,
-    )
-
-    # ---- 並び替え ----
-    order_label = theme.text(ordering.ORDER_LABELS[state["order"]], size=13, weight="bold")
-
-    def change_order(order: str) -> None:
-        if order == state["order"]:
-            return
-        state["order"] = order
-        state["current"] = 0
-        order_label.value = ordering.ORDER_LABELS[order]
-        pager.controls = sorted_pages()
+    def order_changed(event):
+        state['order'] = event.control.value
+        state['current'] = 0
+        pager.controls = _build_pages(page, ordering.sort_subscriptions(subs, state['order']), size)
         pager.selected_index = 0
         refresh_position()
         page.update()
 
-    sort_menu = ft.PopupMenuButton(
-        tooltip="並び順を変える",
-        content=ft.Container(
-            height=theme.TAP_MIN,
-            padding=ft.Padding.symmetric(horizontal=12),
-            border_radius=12,
-            bgcolor=theme.SURFACE,
-            border=ft.Border.all(1, theme.LINE),
-            content=ft.Row(
-                spacing=6,
-                tight=True,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    ft.Icon(ft.Icons.SWAP_VERT, size=18, color=theme.INK),
-                    order_label,
-                    ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=18, color=theme.INK),
-                ],
-            ),
-        ),
-        items=[
-            ft.PopupMenuItem(content=theme.text(label, size=14), on_click=lambda e, order=order: change_order(order))
-            for order, label in ordering.ORDER_LABELS.items()
-        ],
-    )
-
+    sort = ft.Dropdown(label='並び順', value=state['order'], expand=True,
+        options=[ft.DropdownOption(key=key, text=value) for key, value in ordering.ORDER_LABELS.items()],
+        on_select=order_changed)
     refresh_position()
-
-    return ft.Column(
-        expand=True,
-        spacing=0,
-        scroll=ft.ScrollMode.AUTO,
-        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-        controls=[
-            heading,
-            ft.Container(
-                padding=ft.Padding.only(left=theme.GUTTER, right=theme.GUTTER, top=4),
-                content=theme.text(
-                    f"契約中 {counts['active']}件 / うちトライアル {counts['trial']}件 / 解約済み {counts['cancelled']}件",
-                    size=13,
-                    color=theme.INK_SUB,
-                ),
-            ),
-            ft.Container(
-                padding=ft.Padding.only(left=theme.GUTTER, right=theme.GUTTER, top=16, bottom=20),
-                content=ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    wrap=True,
-                    run_spacing=8,
-                    controls=[sort_menu, _legend()],
-                ),
-            ),
-            pager,
-            ft.Container(
-                padding=ft.Padding.only(top=8, bottom=24),
-                content=ft.Column(
-                    spacing=0,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[dots, page_label],
-                ),
-            ),
-        ],
-    )
+    return ft.Column(spacing=18, scroll=ft.ScrollMode.AUTO, controls=[heading, stats,
+        ft.Row(controls=[sort, ft.Container(padding=8, content=theme.text(f'{len(subs)}件', size=13, color=theme.INK_SUB))]),
+        pager, ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, visible=count > 1,
+            controls=[previous, ft.Column(spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[dots, position]), following]),
+        theme.text('時計：トライアル中　✓：解約済み\n左右にスワイプして，次のページへ．',
+            size=11, color=theme.INK_SUB, text_align=ft.TextAlign.CENTER)])
 ```
 
 ## src/views/register.py
@@ -2462,6 +3461,7 @@ import api_client
 import navigation
 from api_client import ApiError
 from logic.api_bridge import call_api
+from components.service_icon import service_icon
 from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
@@ -2474,7 +3474,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     on_saved = on_saved or default_saved
     on_back = on_back or (lambda: navigation.go_back(page))
     message = ft.Text("", color=theme.ERROR)
-    results = ft.Column(spacing=8)
+    results = ft.Column(spacing=8, key="service-search-results")
     plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
     selected = {"service": None, "search_version": 0, "busy": False, "completed": False}
     fields = {
@@ -2522,6 +3522,8 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         selected["search_version"] += 1
         selected["completed"] = False
         save_button.disabled = False
+        results_host.visible = True
+        results_host.height = 50
         selected["service"] = service
         for key in ("name", "join_url", "cancel_url", "cancel_memo"):
             fields[key].read_only = True
@@ -2542,14 +3544,20 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         await asyncio.sleep(0.25)
         if version != selected["search_version"]:
             return
+        results_host.visible = True
+        results_host.height = 220
         results.controls = [ft.ProgressRing(width=20, height=20)]
         page.update()
         try:
             services = await call_api(api, "search_services", search.value or "")
             if version != selected["search_version"]:
                 return
-            results.controls = [ft.Button(service["name"], height=44,
-                               on_click=lambda e, service=service: choose_service(service)) for service in services]
+            results.controls = [ft.Container(
+                bgcolor=theme.GROUND, border_radius=12, padding=10,
+                on_click=lambda e, service=service: choose_service(service),
+                content=ft.Row(spacing=10, controls=[service_icon(service, size=38),
+                    theme.text(service["name"], size=14, expand=True, max_lines=2),
+                    ft.Icon(ft.Icons.CHEVRON_RIGHT, color=theme.INK_SUB)])) for service in services]
             if not services:
                 results.controls = [ft.Text("該当するサービスがありません．下の欄へ手入力できます．", color=theme.INK_SUB)]
         except ApiError as error:
@@ -2567,6 +3575,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         selected["search_version"] += 1
         selected["completed"] = False
         save_button.disabled = False
+        results_host.visible = False
         selected["service"] = None
         for key in ("name", "join_url", "cancel_url", "cancel_memo"):
             fields[key].read_only = False
@@ -2643,31 +3652,63 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
     back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
     search_button = ft.Button("定番サービスを表示・検索", height=44, on_click=search_services)
-    return ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, controls=[
-        back_button, ft.Text("サブスクを追加", size=26, weight=ft.FontWeight.BOLD, color=theme.INK),
-        ft.Text("サービスを選ぶか，契約内容を手入力してください．定番の名称・URL・退会案内を変更する場合は手入力に切り替えてください．", color=theme.INK_SUB),
-        search, search_button, results,
-        manual_button, plans, *fields.values(), message, save_button,
-    ])
+    def section(title, caption, controls):
+        return ft.Container(bgcolor=theme.SURFACE, padding=16, border_radius=18,
+            border=ft.Border.all(1, theme.LINE), content=ft.Column(spacing=12, controls=[
+                theme.text(title, size=16, weight="bold"),
+                theme.text(caption, size=12, color=theme.INK_SUB), *controls]))
+
+    # 画面上端に共通の戻るボタンがあるため，フォーム内の戻る操作はフッターへまとめる．
+    results_host = ft.Container(content=results, height=220, visible=False)
+    search_panel = section("1．サービスを選ぶ", "名称で検索するか，手入力で登録できます．", [
+        search, search_button, results_host, manual_button, plans])
+    results.scroll = ft.ScrollMode.AUTO
+    details_panel = section("2．契約内容", "* は必須項目です．料金は1回の支払額です．", [
+        fields["name"], fields["plan_name"],
+        ft.Row(spacing=10, controls=[ft.Container(content=fields["cycle"], expand=1),
+                                   ft.Container(content=fields["status"], expand=1)]),
+        fields["amount"], fields["joined_at"], fields["trial_ends_at"]])
+    # 金額欄は全幅で表示し，狭い画面でも金額と単位を読み取れるようにする．
+    fields["amount"].helper = None
+    links_panel = section("3．入会・退会の情報", "URLと退会メモは任意です．パスワード自体は保存しないでください．", [
+        fields["join_url"], fields["cancel_url"], fields["cancel_memo"]])
+    body = ft.Column(expand=True, spacing=16, scroll=ft.ScrollMode.AUTO,
+                     controls=[search_panel, details_panel, links_panel, message])
+    save_button.expand = True
+    save_button.height = 50
+    footer = ft.Container(bgcolor=theme.GROUND, padding=ft.Padding.only(top=10),
+        content=ft.Row(spacing=8, controls=[back_button, save_button]))
+    return ft.Column(expand=True, spacing=0, controls=[body, footer])
 ```
 
 ## tests/conftest.py
 
 ```python
-"""api_client はテスト間で共有されるモジュールなので，状態をテストごとに初期化する。"""
+"""api_client・local_db はテスト間で共有される状態を持つので，テストごとに初期化する。"""
 import copy
 
 import pytest
 
 import api_client
+import config
 import dummy_data
+import local_db
 
 
 @pytest.fixture(autouse=True)
-def reset_dummy_store():
-    """api_client のダミー一覧・ログイン状態をテストごとに初期状態へ戻す。"""
+def reset_dummy_store(tmp_path, monkeypatch):
+    """local_db を一時フォルダのDBで初期化し、api_client のダミー一覧・ログイン状態を初期値に戻す。
+
+    config.USE_DUMMY_DATA/API_BASE_URL は本物のAPIに繋ぐ設定に変えて開発することもあるので、
+    テストはそのときの config.py の内容に関わらず常にダミーモードを前提にする
+    (本物のAPIを使う挙動を確認したいテストは、そのテスト自身で上書きする)。
+    """
+    monkeypatch.setattr(config, "USE_DUMMY_DATA", True)
+    local_db.init_db(tmp_path / "test.db")
     api_client._dummy_subs = copy.deepcopy(dummy_data.SUBSCRIPTIONS)
     api_client._logged_in = True
+    api_client._client = None
+    api_client._session_restored = False
     yield
 ```
 
@@ -2807,7 +3848,7 @@ def test_cookie_session_is_shared_across_requests(monkeypatch):
         if request.url.path == "/api/v1/session":
             return httpx.Response(200, json={"ok": True},
                                    headers={"set-cookie": "session=test; Path=/; HttpOnly; Secure"})
-        return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"services": [], "subscriptions": []})
 
     monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
     monkeypatch.setattr(api_client, "_client", httpx.Client(
@@ -2910,6 +3951,180 @@ def test_payment_in_month_before_join_and_yearly():
     assert dates.payment_in_month(yearly, 2026, 11) == datetime(2026, 11, 5, 14, 0)
 ```
 
+## tests/test_local_db.py
+
+```python
+"""一時フォルダのDBを使って local_db の挙動を確認する。"""
+import local_db
+
+
+def test_replace_and_load_keeps_order(tmp_path):
+    """一覧を保存すると、API の順番どおりに読み出せる。"""
+    local_db.init_db(tmp_path / "test.db")
+    items = [
+        {"id": 5, "name": "Netflix", "status": "active"},
+        {"id": 2, "name": "Hulu", "status": "trial"},
+    ]
+    local_db.replace_subscriptions(items, "2026-10-05T12:00+09:00")
+    assert [s["id"] for s in local_db.load_subscriptions()] == [5, 2]
+    assert local_db.get_state("subscriptions_fetched_at") == "2026-10-05T12:00+09:00"
+
+
+def test_logout_keeps_settings(tmp_path):
+    """ログアウトしても年額の計上方法は残る。"""
+    local_db.init_db(tmp_path / "test.db")
+    local_db.set_state("session_cookie", "abc")
+    local_db.set_state("yearly_mode", "average")
+    local_db.clear_user_data()
+    assert local_db.get_state("session_cookie") is None
+    assert local_db.get_state("yearly_mode") == "average"
+
+
+def test_upsert_appends_new_and_keeps_existing_position(tmp_path):
+    """新しい1件は末尾に入り、既存の並び順は変わらない。"""
+    local_db.init_db(tmp_path / "test.db")
+    local_db.replace_subscriptions(
+        [{"id": 1, "name": "Netflix", "status": "active"}, {"id": 2, "name": "Hulu", "status": "active"}],
+        "2026-10-05T12:00+09:00",
+    )
+    local_db.upsert_subscription({"id": 3, "name": "Spotify", "status": "active"})
+    assert [s["id"] for s in local_db.load_subscriptions()] == [1, 2, 3]
+
+    local_db.upsert_subscription({"id": 1, "name": "Netflix", "status": "cancelled"})
+    assert [s["id"] for s in local_db.load_subscriptions()] == [1, 2, 3]
+    assert local_db.load_subscription(1)["status"] == "cancelled"
+
+
+def test_delete_subscription_removes_only_that_item(tmp_path):
+    local_db.init_db(tmp_path / "test.db")
+    local_db.replace_subscriptions(
+        [{"id": 1, "name": "Netflix", "status": "active"}, {"id": 2, "name": "Hulu", "status": "active"}],
+        "2026-10-05T12:00+09:00",
+    )
+    local_db.delete_subscription(1)
+    assert [s["id"] for s in local_db.load_subscriptions()] == [2]
+    assert local_db.load_subscription(1) is None
+
+
+def test_search_services_matches_name_or_kana(tmp_path):
+    local_db.init_db(tmp_path / "test.db")
+    local_db.replace_services([
+        {"id": 1, "name": "Netflix", "name_kana": "ネットフリックス"},
+        {"id": 2, "name": "Hulu", "name_kana": "フール"},
+    ])
+    assert [s["id"] for s in local_db.search_services("flix")] == [1]
+    assert [s["id"] for s in local_db.search_services("フール")] == [2]
+    assert local_db.search_services("存在しない") == []
+
+
+def test_schema_version_bump_resets_cache_but_not_handled_as_error(tmp_path):
+    """init_db は何度呼んでも例外にならない(2回目以降は再作成しない)。"""
+    path = tmp_path / "test.db"
+    local_db.init_db(path)
+    local_db.set_state("yearly_mode", "average")
+    local_db.init_db(path)
+    assert local_db.get_state("yearly_mode") == "average"
+```
+
+## tests/test_mobile_layout.py
+
+```python
+"""スマホ表示のロゴ・操作領域・フッター構成を確認する．"""
+from pathlib import Path
+import json
+import xml.etree.ElementTree as ET
+from types import SimpleNamespace
+import flet as ft
+import httpx
+import pytest
+import api_client
+import config
+from components.service_icon import service_icon
+from service_assets import bundled_icon, logo_catalog
+from views.home import _build_pages, home_view
+from views.register import register_view
+from ui_helpers import walk, save_button
+
+
+class PageStub:
+    width = 390
+    def update(self):
+        pass
+
+
+def test_all_catalog_images_are_valid_and_mirrored_to_server():
+    root = Path(__file__).resolve().parents[2]
+    assets = root / 'submane/src/assets/icons'
+    catalog = logo_catalog()
+    assert len(catalog) == 19
+    for slug, item in catalog.items():
+        image = assets / item['filename']
+        data = image.read_bytes()
+        assert item['source_url'].startswith('https://')
+        if image.suffix == '.png':
+            assert data.startswith(b'\x89PNG\r\n\x1a\n')
+        else:
+            assert ET.fromstring(data).tag.endswith('svg')
+        assert data == (root / 'mane_server/public/icons' / image.name).read_bytes()
+        assert bundled_icon({'slug': slug}) == 'icons/' + image.name
+        assert bundled_icon({'name': item['name']}) == 'icons/' + image.name
+
+
+def test_remote_logo_keeps_aspect_and_has_offline_fallback(monkeypatch):
+    monkeypatch.setattr(config, 'USE_DUMMY_DATA', False)
+    icon = service_icon({'name': 'Netflix', 'icon': 'https://example.com/logo.png', 'status': 'trial'})
+    image = icon.controls[0].content
+    assert image.src == 'https://example.com/logo.png'
+    assert image.fit == ft.BoxFit.CONTAIN
+    assert image.error_content.src == 'icons/netflix.png'
+    assert len(icon.controls) == 2  # 状態をロゴと別のバッジで示す．
+    unknown = service_icon({'name': '独自サービス'})
+    assert isinstance(unknown.controls[0].content, ft.Container)
+
+
+@pytest.mark.parametrize('width', [320, 390, 430])
+def test_home_has_three_columns_readable_names_and_accessible_add(width):
+    page = PageStub()
+    page.width = width
+    view = home_view(page)
+    pager = next(c for c in walk(view) if isinstance(c, ft.PageView))
+    for screen in pager.controls:
+        assert len(screen.controls) <= 4
+        for row in screen.controls:
+            assert len(row.controls) == 3
+            for tile in row.controls:
+                if tile.content:
+                    semantics = tile.content
+                    assert semantics.button and '詳細を開く' in semantics.label
+                    name = semantics.content.controls[1].content
+                    assert name.max_lines == 2
+    add = next(c for c in walk(view) if isinstance(c, ft.IconButton) and c.tooltip == 'サブスクを追加')
+    assert add.width >= 44 and add.height >= 44
+
+
+def test_registration_save_stays_outside_scrolling_fields():
+    view = register_view(PageStub(), on_back=lambda: None)
+    body, footer = view.controls
+    assert body.expand and body.scroll == ft.ScrollMode.AUTO
+    save = save_button(view)
+    assert save in list(walk(footer)) and save not in list(walk(body))
+    assert save.height >= 44 and save.expand
+    amount = next(c for c in walk(body) if isinstance(c, ft.TextField) and c.label.startswith('1回の支払額'))
+    assert any(isinstance(c, ft.Column) and amount in c.controls for c in walk(body))
+
+
+def test_common_api_preserves_server_field_errors(monkeypatch):
+    payload = {'error': {'code': 'validation_error', 'message': '入力内容を確認してください．',
+                         'details': {'custom_name': ['名称を入力してください．']}}}
+    with httpx.Client(base_url='https://example.com', transport=httpx.MockTransport(
+            lambda request: httpx.Response(422, json=payload))) as client:
+        monkeypatch.setattr(api_client, '_client', client)
+        with pytest.raises(api_client.ApiError) as info:
+            api_client._request('POST', '/api/v1/subscriptions', json={})
+    assert info.value.status_code == 422
+    assert info.value.details == payload['error']['details']
+```
+
 ## tests/test_payments.py
 
 ```python
@@ -2973,6 +4188,7 @@ def test_ordering_keeps_cancelled_last():
 ## tests/test_shared_integration.py
 
 ```python
+from ui_helpers import walk, save_button, results_column
 """develop共通APIと石井担当画面の接続を検証する．"""
 import asyncio
 import json
@@ -2996,11 +4212,11 @@ def test_registration_and_status_use_same_shared_store():
         page = PageStub()
         initial = len(api_client.list_subscriptions())
         view = register_view(page, on_saved=saved.append, on_back=lambda: None)
-        fields = {c.label: c for c in view.controls if isinstance(c, ft.TextField)}
+        fields = {c.label: c for c in walk(view) if isinstance(c, ft.TextField)}
         fields["サービス名 *"].value = "共通APIへの登録"
         fields["料金プラン名 *"].value = "月額"
         fields["1回の支払額（円） *"].value = "1000"
-        await view.controls[-1].on_click(None)
+        await save_button(view).on_click(None)
         assert len(api_client.list_subscriptions()) == initial + 1
         item = api_client.get_subscription(saved[0]["id"])
         changed = []
@@ -3030,15 +4246,15 @@ def test_shared_api_uses_v02_paths_payload_and_cookie(monkeypatch):
         assert json.loads(request.content) == {"status": "cancelled"}
         return httpx.Response(200, json={"id": 42, "status": "cancelled"})
     monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
-    with httpx.Client(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as client:
+    with httpx.Client(base_url="https://test.example/", transport=httpx.MockTransport(handler)) as client:
         monkeypatch.setattr(api_client, "_client", client)
         api_client.log_in("demo@example.com", "secret")
         item = api_client.list_subscriptions()[0]
-        assert item["joined_at"] == "2026-10-05T12:30"
+        assert item["joined_at"] == "2026-10-05T12:30+09:00"
         assert item["next_payment_at"] == "2026-11-05T12:30+09:00"
         api_client.create_subscription({"name": "試作", "plan_name": "月額", "amount": 1000, "cycle": "monthly", "status": "active", "joined_at": "2026-10-05T12:30", "service_id": 3, "plan_id": 30})
         api_client.update_subscription(42, cancellation_patch())
-    assert [r.url.path for r in seen] == ["/api/v1/session", "/api/v1/subscriptions", "/api/v1/subscriptions", "/api/v1/subscriptions/42"]
+    assert [r.url.path for r in seen] == ["/api/v1/session", "/api/v1/services", "/api/v1/subscriptions", "/api/v1/subscriptions", "/api/v1/subscriptions/42"]
 
 
 
@@ -3182,6 +4398,7 @@ def test_valid_url(url):
 ## tests/test_ui_workflow.py
 
 ```python
+from ui_helpers import walk, save_button, results_column
 """Fletコントロールの生成と，画面イベントから保存までの流れを確認する．"""
 import asyncio
 import flet as ft
@@ -3209,17 +4426,17 @@ def test_registration_search_plan_and_save(tmp_path):
         client = ApiClient(tmp_path / "records.json", use_dummy=True)
         saved = []
         view = register_view(page, client, on_saved=saved.append)
-        fields = {control.label: control for control in view.controls if isinstance(control, (ft.TextField, ft.Dropdown))}
-        search_button = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
+        fields = {control.label: control for control in walk(view) if isinstance(control, (ft.TextField, ft.Dropdown))}
+        search_button = next(control for control in walk(view) if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
         await search_button.on_click(None)
-        results = next(control for control in view.controls if isinstance(control, ft.Column))
-        next(c for c in results.controls if c.content == "動画サービス（デモ）").on_click(None)
+        results = results_column(view)
+        next(c for c in results.controls if c.content.controls[1].value == "動画サービス（デモ）").on_click(None)
         assert fields["サービス名 *"].value == "動画サービス（デモ）"
         assert int(fields["1回の支払額（円） *"].value) >= 0
         fields["定番サービスのプラン"].value = "1"
         fields["定番サービスのプラン"].on_select(None)
         assert fields["料金プラン名 *"].value
-        save = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "この内容で登録する")
+        save = next(control for control in walk(view) if isinstance(control, ft.Button) and control.content == "この内容で登録する")
         fields["1回の支払額（円） *"].value = "-1"
         await save.on_click(None)
         assert fields["1回の支払額（円） *"].error and not saved
@@ -3243,14 +4460,14 @@ def test_status_requires_confirmation_and_preserves_id(tmp_path):
         save = view.controls[-1]
         await save.on_click(None)
         assert not changed
-        check = next(control for control in view.controls if isinstance(control, ft.Checkbox))
+        check = next(control for control in walk(view) if isinstance(control, ft.Checkbox))
         check.value = True
         await save.on_click(None)
         assert changed[0]["status"] == "cancelled"
         view = status_actions(page, changed[0], client, changed.append)
-        joined = next(control for control in view.controls if isinstance(control, ft.TextField))
+        joined = next(control for control in walk(view) if isinstance(control, ft.TextField))
         joined.value = "invalid"
-        next(control for control in view.controls if isinstance(control, ft.Checkbox)).value = True
+        next(control for control in walk(view) if isinstance(control, ft.Checkbox)).value = True
         await view.controls[-1].on_click(None)
         assert joined.error and len(changed) == 1
         joined.value = "2026-10-05T12:00"
@@ -3277,11 +4494,11 @@ def test_api_field_error_is_shown_and_input_is_preserved():
                            details={"custom_name": ["名称を確認してください"]})
     async def scenario():
         view = register_view(PageStub(), FailingApi())
-        fields = {control.label: control for control in view.controls if isinstance(control, ft.TextField)}
+        fields = {control.label: control for control in walk(view) if isinstance(control, ft.TextField)}
         fields["サービス名 *"].value = "試作"
         fields["料金プラン名 *"].value = "月額"
         fields["1回の支払額（円） *"].value = "1000"
-        save = view.controls[-1]
+        save = save_button(view)
         await save.on_click(None)
         assert fields["サービス名 *"].error == "名称を確認してください"
         assert fields["サービス名 *"].value == "試作" and not save.disabled
@@ -3300,13 +4517,13 @@ def test_delayed_search_does_not_replace_manual_entry():
     async def scenario():
         api = DelayedApi()
         view = register_view(PageStub(), api)
-        search = next(c for c in view.controls if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
+        search = next(c for c in walk(view) if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
         pending = asyncio.create_task(search.on_click(None))
         await api.started.wait()
-        next(c for c in view.controls if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
+        next(c for c in walk(view) if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
         api.finish.set()
         await pending
-        results = next(c for c in view.controls if isinstance(c, ft.Column))
+        results = results_column(view)
         assert results.controls == []
     asyncio.run(scenario())
 
@@ -3328,289 +4545,26 @@ def test_icon_color_stays_with_subscription_when_order_changes():
     assert initial == reordered
 ```
 
-## docs/register.html
+## tests/ui_helpers.py
 
-```html
-<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>サブマネ | サブスク登録</title>
-<style>
-@font-face { font-family: 'Zen Kaku Gothic New'; src: url('../src/assets/fonts/ZenKakuGothicNew-Regular.ttf') format('truetype'); font-display: swap; }
-:root { --ground:#F3F5F4; --surface:#fff; --ink:#14201C; --muted:#4A5552; --line:#D3D8D6; --accent:#0E6B5C; --soft:#DCEBE7; --trial:#B45309; --error:#B3261E; }
-* { box-sizing:border-box; }
-body { margin:0; background:var(--ground); color:var(--ink); font-family:'Zen Kaku Gothic New','Yu Gothic',sans-serif; }
-button,input,select,textarea { font:inherit; }
-button,a,input,select,textarea { -webkit-tap-highlight-color:transparent; }
-button { cursor:pointer; }
-[hidden] { display:none !important; }
-:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
-.app { max-width:430px; margin:auto; min-height:100vh; padding:env(safe-area-inset-top) 24px calc(32px + env(safe-area-inset-bottom)); }
-header { display:flex; align-items:center; justify-content:space-between; padding:16px 0 10px; }
-.brand { font-size:22px; font-weight:900; color:var(--accent); }
-.back { min-height:44px; display:inline-flex; align-items:center; color:var(--muted); font-size:13px; text-decoration:none; }
-h1 { font-size:26px; line-height:1.4; margin:14px 0 8px; }
-h2 { font-size:18px; margin:0 0 16px; }
-p { line-height:1.7; }
-.intro { font-size:14px; color:var(--muted); margin:0 0 20px; }
-.demo { font-size:12px; background:var(--soft); color:var(--accent); border-radius:10px; padding:10px 12px; margin:0 0 24px; }
-.section { border-top:1px solid var(--line); padding:24px 0 8px; }
-.step { color:var(--accent); font-size:12px; display:block; margin-bottom:4px; letter-spacing:.08em; }
-.field { margin-bottom:18px; }
-label { display:block; font-size:13px; font-weight:bold; margin-bottom:7px; }
-.required { color:var(--accent); font-size:11px; margin-left:6px; }
-.optional { color:var(--muted); font-size:11px; font-weight:normal; margin-left:6px; }
-input,select,textarea { width:100%; min-width:0; min-height:48px; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--ink); background:var(--surface); font-size:15px; }
-textarea { resize:vertical; min-height:96px; }
-input[aria-invalid="true"],select[aria-invalid="true"] { border-color:var(--error); }
-.helper { display:block; margin:6px 0 0; font-size:12px; color:var(--muted); line-height:1.65; }
-.error { display:block; font-size:12px; line-height:1.6; color:var(--error); margin-top:5px; }
-.pair { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.results { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
-.service { display:flex; align-items:center; gap:12px; text-align:left; width:100%; padding:12px; background:var(--surface); border:1px solid var(--line); border-radius:12px; min-height:68px; }
-.service[aria-pressed="true"] { border:2px solid var(--accent); background:var(--soft); }
-.service-icon { flex:0 0 40px; height:40px; display:grid; place-items:center; border-radius:12px; color:white; background:var(--accent); font-size:18px; }
-.service-name { font-weight:bold; font-size:14px; }
-.service-note { color:var(--muted); font-size:11px; display:block; margin-top:2px; }
-.text-button { border:0; background:none; color:var(--accent); min-height:44px; padding:8px 0; font-size:13px; text-align:left; }
-.primary { width:100%; min-height:50px; border:0; border-radius:12px; background:var(--accent); color:white; font-size:15px; font-weight:bold; padding:12px; }
-button:disabled { cursor:default; opacity:.6; }
-.notice { margin:12px 0; font-size:13px; color:var(--error); }
-.success { border:1px solid var(--accent); background:var(--soft); border-radius:12px; padding:18px; margin:18px 0; }
-.success h2 { margin-bottom:8px; color:var(--accent); }
-.success p { font-size:13px; margin:4px 0; }
-.saved { padding:12px 0; border-bottom:1px solid var(--line); }
-.saved strong { display:block; font-size:14px; }
-.saved span { color:var(--muted); font-size:12px; }
-.saved.cancelled { opacity:.6; }
-.saved.trial strong::before { content:'◷ '; color:var(--trial); }
-footer { color:var(--muted); font-size:11px; text-align:center; margin-top:24px; }
-@media(max-width:350px) { .app { padding-left:16px; padding-right:16px; } .pair { grid-template-columns:1fr; gap:0; } }
-</style>
-</head>
-<body>
-<div class="app">
-  <header><span class="brand">サブマネ</span><a class="back" href="home_mock.html">‹ ホームの見本へ</a></header>
-  <main>
-    <h1>サブスクを追加</h1>
-    <p class="intro">サービスを選ぶか，契約内容を手入力して登録してください．</p>
-    <p class="demo">HTMLデモ：登録内容はこのブラウザに保存します．Flet版とは同期しません．</p>
-    <section aria-labelledby="search-heading">
-      <span class="step">STEP 01</span><h2 id="search-heading">サービスを選ぶ</h2>
-      <label for="search">定番サービスを名称で検索</label>
-      <input id="search" type="search" placeholder="動画，音楽，読書など" autocomplete="off" aria-describedby="master-note">
-      <span class="helper" id="master-note">表示される名称・料金・URLは架空のデモ情報です．</span>
-      <div class="results" id="results" aria-label="検索結果"></div>
-      <p class="helper" id="search-status" role="status"></p>
-      <button class="text-button" id="manual" type="button">＋ 定番にないサービスを手入力する</button>
-    </section>
-    <form id="registration" novalidate>
-      <section class="section" aria-labelledby="contract-heading">
-        <span class="step">STEP 02</span><h2 id="contract-heading">契約内容を入力</h2>
-        <div class="field" id="preset-field" hidden>
-          <label for="preset">定番サービスのプラン</label><select id="preset"></select>
-          <span class="helper">プランを選んだ後，各項目を修正できます．</span>
-        </div>
-        <div class="field"><label for="name">サービス名<span class="required">必須</span></label>
-          <input id="name" name="name" maxlength="100" required aria-describedby="name-error"><span class="error" id="name-error"></span></div>
-        <div class="field"><label for="plan_name">料金プラン名<span class="required">必須</span></label>
-          <input id="plan_name" name="plan_name" maxlength="100" placeholder="個人プランなど" required aria-describedby="plan_name-error"><span class="error" id="plan_name-error"></span></div>
-        <div class="pair">
-          <div class="field"><label for="cycle">更新周期<span class="required">必須</span></label>
-            <select id="cycle" name="cycle" aria-describedby="cycle-error"><option value="monthly">月額</option><option value="yearly">年額</option></select><span class="error" id="cycle-error"></span></div>
-          <div class="field"><label for="amount">1回の支払額（円）<span class="required">必須</span></label>
-            <input id="amount" name="amount" type="text" inputmode="numeric" placeholder="1000" required aria-describedby="amount-error amount-help"><span class="error" id="amount-error"></span></div>
-        </div>
-        <p class="helper" id="amount-help">無料トライアル中も，有料移行後の1回の金額を入力してください．</p>
-        <div class="field" style="margin-top:18px"><label for="joined_at">入会日時<span class="required">必須</span></label>
-          <input id="joined_at" name="joined_at" type="datetime-local" step="60" required aria-describedby="joined_at-error joined-help">
-          <span class="helper" id="joined-help">日本時間・分単位で入力してください．</span><span class="error" id="joined_at-error"></span></div>
-        <div class="field"><label for="status">契約状態<span class="required">必須</span></label>
-          <select id="status" name="status" aria-describedby="status-error"><option value="active">契約中</option><option value="trial">無料トライアル中</option><option value="cancelled">解約済み</option></select><span class="error" id="status-error"></span></div>
-        <div class="field" id="trial-field" hidden><label for="trial_ends_at">トライアル終了日時<span class="required">必須</span></label>
-          <input id="trial_ends_at" name="trial_ends_at" type="datetime-local" step="60" aria-describedby="trial_ends_at-error trial-help">
-          <span class="helper" id="trial-help">この日時をトライアルの次回支払日として扱います．</span><span class="error" id="trial_ends_at-error"></span></div>
-      </section>
-      <section class="section" aria-labelledby="url-heading">
-        <span class="step">STEP 03</span><h2 id="url-heading">入会・退会の情報</h2>
-        <div class="field"><label for="join_url">入会URL<span class="optional">任意</span></label>
-          <input id="join_url" name="join_url" type="url" maxlength="2048" placeholder="https://…" aria-describedby="join_url-error"><span class="error" id="join_url-error"></span></div>
-        <div class="field"><label for="cancel_url">退会URL<span class="optional">任意</span></label>
-          <input id="cancel_url" name="cancel_url" type="url" maxlength="2048" placeholder="https://…" aria-describedby="cancel_url-error"><span class="error" id="cancel_url-error"></span></div>
-        <div class="field"><label for="cancel_memo">退会に必要な情報<span class="optional">任意</span></label>
-          <textarea id="cancel_memo" name="cancel_memo" maxlength="1000" placeholder="例：メールアドレスとパスワードの準備が必要" aria-describedby="memo-help cancel_memo-error"></textarea>
-          <span class="helper" id="memo-help">パスワード自体は入力しないでください．必要な準備や手順だけを記録します．</span><span class="error" id="cancel_memo-error"></span></div>
-      </section>
-      <p class="notice" id="message" role="alert"></p>
-      <button class="primary" id="submit" type="submit">この内容で登録する</button>
-    </form>
-    <section class="success" id="success" aria-labelledby="success-heading" hidden>
-      <h2 id="success-heading">登録しました</h2><p id="success-detail"></p>
-      <button class="text-button" type="button" id="another">続けて別のサブスクを追加する →</button>
-    </section>
-    <section class="section" aria-labelledby="saved-heading">
-      <h2 id="saved-heading">このブラウザに登録したサブスク</h2>
-      <div id="saved-list"></div><p class="helper" id="saved-status" role="status"></p>
-      <button class="text-button" id="export" type="button" disabled>登録データをJSONで保存する ↓</button>
-    </section>
-  </main>
-  <footer>サブマネ · 石井担当の登録画面</footer>
-</div>
-<script>
-'use strict';
-const STORAGE_KEY = 'submane.ishii.html.subscriptions.v1';
-const SERVICES = [
-  { id:'video-demo', name:'動画サービス（デモ）', aliases:['動画','video'], join_url:'https://example.com/video/join', cancel_url:'https://example.com/video/cancel', cancel_memo:'退会手続きにはメールアドレスとパスワードの準備が必要です．', plans:[{name:'月額プラン（デモ）',cycle:'monthly',amount:1000},{name:'年額プラン（デモ）',cycle:'yearly',amount:10000}] },
-  { id:'music-demo', name:'音楽サービス（デモ）', aliases:['音楽','music'], join_url:'https://example.com/music/join', cancel_url:'https://example.com/music/cancel', cancel_memo:'契約した窓口を確認してください．', plans:[{name:'個人プラン（デモ）',cycle:'monthly',amount:800}] },
-  { id:'book-demo', name:'読書サービス（デモ）', aliases:['読書','book'], join_url:'https://example.com/book/join', cancel_url:'https://example.com/book/cancel', cancel_memo:'パスワードの準備が必要です．', plans:[{name:'月額プラン（デモ）',cycle:'monthly',amount:500}] }
-];
-const FIELD_NAMES = ['name','plan_name','cycle','amount','joined_at','status','trial_ends_at','join_url','cancel_url','cancel_memo'];
-const normalize = value => String(value).normalize('NFKC').toLocaleLowerCase('ja').trim();
-function searchServices(keyword) {
-  return SERVICES.filter(service => normalize([service.name,...service.aliases].join(' ')).includes(normalize(keyword)));
-}
-function validUrl(value) {
-  if (!value) return true;
-  if (/\s/.test(value) || value.length > 2048 || !/^https?:\/\//.test(value)) return false;
-  try { const url = new URL(value); return !!url.hostname && !url.username && !url.password && url.port !== '0'; }
-  catch { return false; }
-}
-function validTime(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
-  if (!match) return false;
-  const [year,month,day,hour,minute] = match.slice(1).map(Number);
-  if (year < 1 || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59) return false;
-  const date = new Date(0); date.setUTCFullYear(year,month-1,day); date.setUTCHours(hour,minute,0,0);
-  return date.getUTCFullYear()===year && date.getUTCMonth()===month-1 && date.getUTCDate()===day;
-}
-function validate(raw) {
-  const data = Object.fromEntries(FIELD_NAMES.map(key => [key,String(raw[key] ?? '').trim()]));
-  const errors = {};
-  for (const key of ['name','plan_name']) {
-    if (!data[key]) errors[key] = '入力してください．';
-    else if ([...data[key]].length > 100) errors[key] = '100文字以内で入力してください．';
-  }
-  const amount = data.amount.normalize('NFKC');
-  if (!/^\d+$/.test(amount) || Number(amount) > 999999999) errors.amount = '0以上999999999以下の整数を円単位で入力してください．';
-  else data.amount = Number(amount);
-  if (!['monthly','yearly'].includes(data.cycle)) errors.cycle = '月額または年額を選択してください．';
-  if (!['active','trial','cancelled'].includes(data.status)) errors.status = '契約状態を選択してください．';
-  if (!validTime(data.joined_at)) errors.joined_at = '実在する入会日時を分単位で入力してください．';
-  if (data.status === 'trial') {
-    if (!validTime(data.trial_ends_at)) errors.trial_ends_at = 'トライアル終了日時を入力してください．';
-    else if (validTime(data.joined_at) && data.trial_ends_at <= data.joined_at) errors.trial_ends_at = '入会日時より後の日時を入力してください．';
-  } else data.trial_ends_at = '';
-  for (const key of ['join_url','cancel_url']) if (!validUrl(data[key])) errors[key] = 'http://またはhttps://で始まるURLを入力してください．';
-  if ([...data.cancel_memo].length > 1000) errors.cancel_memo = '1000文字以内で入力してください．';
-  return {data,errors};
-}
-function readRecords(storage) {
-  const records = JSON.parse(storage.getItem(STORAGE_KEY) || '[]');
-  if (!Array.isArray(records) || records.some(item => !item || typeof item !== 'object' || typeof item.id !== 'string' || typeof item.name !== 'string' || !Number.isInteger(item.amount))) throw new Error('invalid records');
-  return records;
-}
-globalThis.SubmaneRegistration = {validate,validUrl,validTime,searchServices,readRecords,STORAGE_KEY};
+```python
+"""入れ子になったフォームをユーザが操作する項目で探す．"""
+import flet as ft
 
-function initialize() {
-  const el = id => document.getElementById(id);
-  let selected = null, busy = false, records = [];
-  function japaneseNow() {
-    const parts = new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date());
-    const values = Object.fromEntries(parts.map(part => [part.type,part.value]));
-    return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
-  }
-  function clearErrors() {
-    FIELD_NAMES.forEach(key => { el(key).removeAttribute('aria-invalid'); el(key+'-error').textContent=''; });
-    el('message').textContent='';
-  }
-  function applyPlan() {
-    if (!selected) return;
-    const plan = selected.plans[Number(el('preset').value)];
-    el('plan_name').value=plan.name; el('cycle').value=plan.cycle; el('amount').value=plan.amount;
-  }
-  function choose(service) {
-    if (busy) return;
-    selected=service; clearErrors();
-    ['name','join_url','cancel_url','cancel_memo'].forEach(key => { el(key).value=service[key]; });
-    el('preset').replaceChildren(...service.plans.map((plan,index) => new Option(plan.name,String(index))));
-    el('preset-field').hidden=false; applyPlan(); renderSearch();
-    el('search-status').textContent='選択済み：'+service.name;
-  }
-  function renderSearch() {
-    const matches=searchServices(el('search').value); el('results').replaceChildren();
-    matches.forEach(service => {
-      const button=document.createElement('button'); button.type='button'; button.className='service';
-      button.setAttribute('aria-pressed',String(selected?.id===service.id));
-      const icon=document.createElement('span'); icon.className='service-icon'; icon.textContent=service.name[0]; icon.setAttribute('aria-hidden','true');
-      const text=document.createElement('span'); text.className='service-name'; text.textContent=service.name;
-      const note=document.createElement('span'); note.className='service-note'; note.textContent='プラン・入会URL・退会URLを自動入力'; text.append(note);
-      button.append(icon,text); button.addEventListener('click',()=>choose(service)); el('results').append(button);
-    });
-    el('search-status').textContent=matches.length ? `${matches.length}件のサービス` : '該当するサービスがありません．下の欄に手入力できます．';
-  }
-  function setTrial() {
-    const trial=el('status').value==='trial'; el('trial-field').hidden=!trial;
-    el('trial_ends_at').required=trial; if (!trial) el('trial_ends_at').value='';
-  }
-  function renderSaved() {
-    el('saved-list').replaceChildren();
-    records.forEach(item => {
-      const row=document.createElement('div'); row.className='saved '+item.status;
-      const name=document.createElement('strong'); name.textContent=item.name;
-      const detail=document.createElement('span'); detail.textContent=`${item.cycle==='yearly'?'年額':'月額'} · ${item.amount.toLocaleString('ja-JP')}円 · ${{active:'契約中',trial:'無料トライアル中',cancelled:'解約済み'}[item.status] || '状態未設定'}`;
-      row.append(name,detail); el('saved-list').append(row);
-    });
-    el('saved-status').textContent=records.length ? `${records.length}件を保存しています．` : 'まだ登録がありません．';
-    el('export').disabled=!records.length;
-  }
-  el('search').addEventListener('input',renderSearch);
-  el('preset').addEventListener('change',applyPlan);
-  el('status').addEventListener('change',setTrial);
-  el('manual').addEventListener('click',()=>{
-    selected=null; clearErrors(); el('preset-field').hidden=true;
-    ['name','plan_name','amount','join_url','cancel_url','cancel_memo'].forEach(key=>{ el(key).value=''; });
-    renderSearch(); el('name').focus();
-  });
-  el('registration').addEventListener('submit',event=>{
-    event.preventDefault(); if (busy) return; clearErrors();
-    const raw=Object.fromEntries(FIELD_NAMES.map(key=>[key,el(key).value]));
-    const {data,errors}=validate(raw);
-    if (Object.keys(errors).length) {
-      Object.entries(errors).forEach(([key,text])=>{ el(key).setAttribute('aria-invalid','true'); el(key+'-error').textContent=text; });
-      el('message').textContent='入力内容を確認してください．'; el(Object.keys(errors)[0]).focus(); return;
-    }
-    busy=true; el('submit').disabled=true;
-    try {
-      const current=readRecords(localStorage);
-      const id=globalThis.crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
-      const item={...data,id,service_id:selected?.id || '',icon:'',registered_at:new Date().toISOString(),next_payment_at:data.status==='trial'?data.trial_ends_at:null};
-      localStorage.setItem(STORAGE_KEY,JSON.stringify([...current,item])); records=[...current,item]; renderSaved();
-      el('success-detail').textContent=`${data.name} · ${data.cycle==='yearly'?'年額':'月額'} ${data.amount.toLocaleString('ja-JP')}円`;
-      el('registration').hidden=true; el('success').hidden=false;
-      el('search').disabled=true; el('manual').disabled=true; el('results').querySelectorAll('button').forEach(button=>{button.disabled=true;});
-      el('success').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'center'});
-    } catch {
-      el('message').textContent='保存できませんでした．ブラウザの保存設定，空き容量，保存済みデータの形式を確認してください．入力内容は残っています．';
-    } finally { busy=false; el('submit').disabled=false; }
-  });
-  el('another').addEventListener('click',()=>{
-    el('registration').reset(); selected=null; clearErrors(); el('preset-field').hidden=true;
-    el('joined_at').value=japaneseNow(); setTrial(); el('success').hidden=true; el('registration').hidden=false;
-    el('search').disabled=false; el('manual').disabled=false; renderSearch(); el('search').focus();
-  });
-  el('export').addEventListener('click',()=>{
-    const blob=new Blob([JSON.stringify(records,null,2)],{type:'application/json;charset=utf-8'});
-    const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download='submane-html-subscriptions.json';
-    document.body.append(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
-  });
-  el('joined_at').value=japaneseNow(); renderSearch(); setTrial();
-  try { records=readRecords(localStorage); renderSaved(); }
-  catch { el('saved-status').textContent='保存済みデータを読み取れません．ブラウザの保存設定またはデータ形式を確認してください．'; }
-}
-if (typeof document !== 'undefined') initialize();
-</script>
-</body>
-</html>
+
+def walk(root):
+    yield root
+    content = getattr(root, "content", None)
+    if isinstance(content, ft.Control):
+        yield from walk(content)
+    for control in getattr(root, "controls", []) or []:
+        yield from walk(control)
+
+
+def save_button(view):
+    return next(c for c in walk(view) if isinstance(c, ft.Button) and c.content == "この内容で登録する")
+
+
+def results_column(view):
+    return next(c for c in walk(view) if getattr(c, "key", None) == "service-search-results")
 ```

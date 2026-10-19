@@ -18,6 +18,29 @@ from logic.subscriptions import normalize_keyword, validate_subscription
 import dummy_data
 
 
+"""APIの呼び出しをまとめる。各画面はここの関数だけを使い、httpx を直接呼ばない。
+
+・config.USE_DUMMY_DATA が True の間は、APIを呼ばずに dummy_data.py の内容で動く
+  (登録・編集・削除もアプリを閉じるまでは反映される)
+・USE_DUMMY_DATA が False のときは、local_db.py(docs/local_db.md)に前回の取得結果を
+  キャッシュし、サーバに接続できないときはそのキャッシュを返す
+・失敗したときは ApiError(接続できないときは ApiError のサブクラス OfflineError)を送出する。
+  画面側で except ApiError して案内を表示する
+・APIの項目名とアプリ内の項目名が違う場合は、_to_app_subscription() / _to_api_subscription()
+  の中だけで変換する(画面は直さない)
+"""
+
+import copy
+from datetime import datetime
+from urllib.parse import urlparse
+
+import httpx
+
+import config
+import dummy_data
+import local_db
+
+
 class ApiError(RuntimeError):
     """画面に表示できる保存・通信エラー．"""
 
@@ -36,15 +59,16 @@ class OfflineError(ApiError):
 
 
 # ------------------------------------------------------------------
-# サーバ設計書v0.2のAPIパス
+# APIのパス。mane_server/server_db_api.md §6 に合わせている
 # ------------------------------------------------------------------
 ENDPOINTS = {
-    "sign_up": "api/v1/signup",
-    "log_in": "api/v1/session",
-    "log_out": "api/v1/session",
-    "subscriptions": "api/v1/subscriptions",
-    "subscription": "api/v1/subscriptions/{sub_id}",
-    "services": "api/v1/services",
+    "sign_up": "/api/v1/signup",
+    "log_in": "/api/v1/session",
+    "log_out": "/api/v1/session",
+    "me": "/api/v1/me",
+    "subscriptions": "/api/v1/subscriptions",
+    "subscription": "/api/v1/subscriptions/{sub_id}",
+    "services": "/api/v1/services",
 }
 
 # ------------------------------------------------------------------
@@ -53,43 +77,60 @@ ENDPOINTS = {
 _client: httpx.Client | None = None  # ログイン状態(cookie)を保つため使い回す
 _logged_in = config.USE_DUMMY_DATA and config.DUMMY_START_LOGGED_IN
 _dummy_subs = copy.deepcopy(dummy_data.SUBSCRIPTIONS)
+_session_restored = False  # 起動後、保存していたCookieを一度だけ読み込んだか
+_HOST = urlparse(config.API_BASE_URL).hostname if config.API_BASE_URL else None
 
 
 def _http() -> httpx.Client:
     """httpx のクライアントを返す。cookie を保持するので1つを使い回す。"""
-    global _client
+    global _client, _logged_in, _session_restored
     if _client is None:
-        if not config.API_BASE_URL or "<" in config.API_BASE_URL:
-            raise ApiError("APIの接続先が未設定です．")
         _client = httpx.Client(base_url=config.API_BASE_URL, timeout=config.REQUEST_TIMEOUT)
+    if not _session_restored:
+        _session_restored = True
+        cookie = local_db.get_state("session_cookie")
+        if cookie:
+            _client.cookies.set("session_id", cookie, domain=_HOST)
+            _logged_in = True
     return _client
 
 
+def _save_session(email: str | None = None) -> None:
+    """ログイン・会員登録の直後: 受け取ったCookieと(あれば)メールアドレスを保存する。"""
+    cookie = _http().cookies.get("session_id")
+    if cookie:
+        local_db.set_state("session_cookie", cookie)
+    if email:
+        local_db.set_state("user_email", email)
+
+
 def _request(method: str, path: str, **kwargs):
-    """APIを呼び、JSONを返す。失敗したら ApiError にそろえる。"""
+    """APIを呼び、JSONを返す。通信できなければ OfflineError、APIがエラーを返したら ApiError にそろえる。"""
     global _logged_in
     try:
-        base = str(_http().base_url).rstrip("/")
-        if base.endswith("/api/v1"):
-            path = path.removeprefix("api/v1/")
-        response = _http().request(method, base + "/" + path, **kwargs)
+        response = _http().request(method, path, **kwargs)
     except httpx.TimeoutException as err:
         raise OfflineError("サーバからの応答がありません。時間をおいてもう一度お試しください。") from err
     except httpx.HTTPError as err:
         raise OfflineError("サーバに接続できません。通信環境を確認してください。") from err
     if response.status_code == 401:
+        if path == ENDPOINTS["log_in"] and method == "POST":
+            # ログイン試行そのものの401は「session切れ」ではなくメール・パスワード不一致。
+            # サーバのメッセージ(doc §6.1)をそのまま使う。
+            raise ApiError(_error_message(response))
         _logged_in = False
+        local_db.clear_user_data()
         raise ApiError("ログインの有効期限が切れました。もう一度ログインしてください。")
     if response.status_code == 404:
         raise ApiError("データが見つかりません。")
     if response.status_code >= 400:
         try:
-            body = response.json().get("error", {})
+            error = response.json().get("error", {})
         except (ValueError, AttributeError):
-            body = {}
-        body = body if isinstance(body, dict) else {}
-        raise ApiError(body.get("message") or f"サーバでエラーが起きました(コード {response.status_code})。",
-                       status_code=response.status_code, code=body.get("code"), details=body.get("details"))
+            error = {}
+        error = error if isinstance(error, dict) else {}
+        raise ApiError(_error_message(response), status_code=response.status_code,
+                       code=error.get("code"), details=error.get("details"))
     if not response.content:
         return None
     try:
@@ -98,15 +139,22 @@ def _request(method: str, path: str, **kwargs):
         raise ApiError("サーバから想定外の応答が返りました。") from err
 
 
-def _display_time(value):
-    if not value:
-        return None
-    from logic.subscriptions import JST, parse_time
-    return parse_time(value).astimezone(JST).replace(tzinfo=None).isoformat(timespec="minutes")
+def _error_message(response: httpx.Response) -> str:
+    """{"error": {"message": ...}} の形(mane_server/server_db_api.md §5)ならその文言を使う。"""
+    try:
+        error = response.json().get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+    except ValueError:
+        message = None
+    return message or f"サーバでエラーが起きました(コード {response.status_code})。"
 
 
 def _to_app_subscription(data: dict) -> dict:
-    """APIのサブスク1件を、アプリ内で使う形にそろえる。"""
+    """APIのサブスク1件を、アプリ内で使う形にそろえる。
+
+    APIの項目名は trial_ends_at(s あり。mane_server/server_db_api.md §6.4)だが、
+    アプリ内では trial_end_at(s なし)で統一している。
+    """
     return {
         "id": data.get("id"),
         "name": data.get("name", ""),
@@ -114,23 +162,44 @@ def _to_app_subscription(data: dict) -> dict:
         "plan_name": data.get("plan_name", ""),
         "cycle": data.get("cycle", "monthly"),
         "amount": int(data.get("amount") or 0),
-        "joined_at": _display_time(data.get("joined_at")),
+        "joined_at": data.get("joined_at"),
         "join_url": data.get("join_url", ""),
         "cancel_url": data.get("cancel_url", ""),
         "cancel_memo": data.get("cancel_memo", ""),
         "status": data.get("status", "active"),
-        "trial_end_at": _display_time(data.get("trial_ends_at", data.get("trial_end_at"))),
-        "trial_ends_at": _display_time(data.get("trial_ends_at", data.get("trial_end_at"))),
+        "trial_end_at": data.get("trial_ends_at"),
+        "trial_ends_at": data.get("trial_ends_at"),
         **{key: data.get(key) for key in ("service_id", "plan_id", "created_at", "registered_at", "next_payment_at")},
     }
 
 
 def _to_api_subscription(data: dict) -> dict:
-    """統合コードの旧トライアル項目名をサーバ仕様へ合わせる．"""
-    payload = dict(data)
-    if "trial_end_at" in payload:
-        payload["trial_ends_at"] = payload.pop("trial_end_at")
-    return payload
+    """アプリ内のサブスク1件(フラットな形)を、APIが要求する形にする。
+
+    APIは「定番サービス参照(service_id)」と「カスタム入力(custom_name 等)」を
+    別の項目として持つが、アプリ内では区別せず1つの辞書にフラットに持っている。
+    data に無いキーは省く(PATCHでその項目に触れない、という意味になる)。
+    """
+    result = {}
+    for key in ("amount", "cycle", "plan_name", "joined_at", "status"):
+        if key in data:
+            result[key] = data[key]
+    if "trial_end_at" in data:
+        result["trial_ends_at"] = data["trial_end_at"] or None
+    if "trial_ends_at" in data:
+        result["trial_ends_at"] = data["trial_ends_at"] or None
+    if data.get("plan_id"):
+        result["plan_id"] = int(data["plan_id"])
+    if "service_id" in data:
+        service_id = data["service_id"]
+        if service_id:
+            result["service_id"] = int(service_id)
+        else:
+            result["custom_name"] = data.get("name", "")
+            result["custom_join_url"] = data.get("join_url", "")
+            result["custom_cancel_url"] = data.get("cancel_url", "")
+            result["custom_cancel_memo"] = data.get("cancel_memo", "")
+    return result
 
 
 def _find_dummy(sub_id) -> dict:
@@ -145,7 +214,9 @@ def _find_dummy(sub_id) -> dict:
 # アカウント
 # ------------------------------------------------------------------
 def is_logged_in() -> bool:
-    """ログイン済みかどうかを返す。"""
+    """ログイン済みかどうかを返す。本物のAPIのときは、保存したCookieの有無も見る。"""
+    if not config.USE_DUMMY_DATA:
+        _http()  # 保存していたCookieをまだ読んでいなければここで読む
     return _logged_in
 
 
@@ -154,6 +225,11 @@ def sign_up(email: str, password: str) -> None:
     global _logged_in
     if not config.USE_DUMMY_DATA:
         _request("POST", ENDPOINTS["sign_up"], json={"email": email, "password": password})
+        _save_session(email)
+        refresh_services()
+    else:
+        # 本物のAPIが無くてもメールアドレスは保存する(アカウント画面の表示用)。
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
@@ -162,49 +238,66 @@ def log_in(email: str, password: str) -> None:
     global _logged_in
     if not config.USE_DUMMY_DATA:
         _request("POST", ENDPOINTS["log_in"], json={"email": email, "password": password})
+        _save_session(email)
+        refresh_services()
+    else:
+        local_db.set_state("user_email", email)
     _logged_in = True
 
 
 def log_out() -> None:
-    """ログアウトする。"""
+    """ログアウトする。端末に残した前回のデータも消す。"""
     global _logged_in
     if not config.USE_DUMMY_DATA:
         _request("DELETE", ENDPOINTS["log_out"])
     _logged_in = False
+    local_db.clear_user_data()
 
 
 # ------------------------------------------------------------------
 # サブスク
 # ------------------------------------------------------------------
 def list_subscriptions() -> list[dict]:
-    """自分のサブスク一覧を登録順で返す。"""
+    """自分のサブスク一覧を登録順で返す。通信できなければ前回取得した一覧を返す。"""
     if config.USE_DUMMY_DATA:
         return copy.deepcopy(_dummy_subs)
-    result = _request("GET", ENDPOINTS["subscriptions"])
-    result = result.get("subscriptions") if isinstance(result, dict) else result
-    if not isinstance(result, list):
-        raise ApiError("一覧の応答形式が想定と異なります．")
-    return [_to_app_subscription(item) for item in result]
+    try:
+        response = _request("GET", ENDPOINTS["subscriptions"]) or {}
+        items = [_to_app_subscription(item) for item in response.get("subscriptions", [])]
+    except OfflineError:
+        cached = local_db.load_subscriptions()
+        if not cached:
+            raise
+        return cached
+    local_db.replace_subscriptions(items, datetime.now().astimezone().isoformat())
+    return items
 
 
 def get_subscription(sub_id) -> dict:
-    """サブスクを1件返す。"""
+    """サブスクを1件返す。通信できなければ前回取得した内容を返す。"""
     if config.USE_DUMMY_DATA:
         return copy.deepcopy(_find_dummy(sub_id))
-    return _to_app_subscription(_request("GET", ENDPOINTS["subscription"].format(sub_id=sub_id)))
+    try:
+        item = _to_app_subscription(_request("GET", ENDPOINTS["subscription"].format(sub_id=sub_id)))
+    except OfflineError:
+        cached = local_db.load_subscription(sub_id)
+        if cached is None:
+            raise
+        return cached
+    local_db.upsert_subscription(item)
+    return item
 
 
 def create_subscription(data: dict) -> dict:
-    """サブスクを登録し、登録された1件を返す。"""
+    """サブスクを登録し、登録された1件を返す。通信できないときはそのまま失敗する(あとで送る仕組みは作らない)。"""
     if config.USE_DUMMY_DATA:
         new_id = max((sub["id"] for sub in _dummy_subs), default=0) + 1
         sub = _to_app_subscription({**data, "id": new_id})
         _dummy_subs.append(sub)
         return copy.deepcopy(sub)
-    data = validate_subscription(data)
-    if data["status"] == "cancelled":
-        raise ApiError("登録時は契約中またはトライアル中を選択してください．")
-    return _to_app_subscription(_request("POST", ENDPOINTS["subscriptions"], json=registration_payload(data)))
+    item = _to_app_subscription(_request("POST", ENDPOINTS["subscriptions"], json={key: value for key, value in _to_api_subscription(data).items() if key != "status"}))
+    local_db.upsert_subscription(item)
+    return item
 
 
 def update_subscription(sub_id, data: dict) -> dict:
@@ -212,11 +305,11 @@ def update_subscription(sub_id, data: dict) -> dict:
     if config.USE_DUMMY_DATA:
         sub = _find_dummy(sub_id)
         sub.update({key: value for key, value in data.items() if key != "id"})
-        if data.get("status") in {"active", "cancelled"}:
-            sub.update(trial_end_at=None, trial_ends_at=None, next_payment_at=None)
         return copy.deepcopy(sub)
     path = ENDPOINTS["subscription"].format(sub_id=sub_id)
-    return _to_app_subscription(_request("PATCH", path, json=update_payload(_to_api_subscription(data))))
+    item = _to_app_subscription(_request("PATCH", path, json=_to_api_subscription(data)))
+    local_db.upsert_subscription(item)
+    return item
 
 
 def delete_subscription(sub_id) -> None:
@@ -225,21 +318,32 @@ def delete_subscription(sub_id) -> None:
         _dummy_subs.remove(_find_dummy(sub_id))
         return
     _request("DELETE", ENDPOINTS["subscription"].format(sub_id=sub_id))
+    local_db.delete_subscription(sub_id)
 
 
 # ------------------------------------------------------------------
 # 定番サービス
 # ------------------------------------------------------------------
-def search_services(keyword: str) -> list[dict]:
-    """定番サービスを名称で検索する。keyword が空なら全件。"""
+def refresh_services() -> None:
+    """定番サービスのマスタを取得し直し、オフライン検索用に保存する(ログイン直後に呼ぶ)。"""
     if config.USE_DUMMY_DATA:
-        word = normalize_keyword(keyword or "")
-        return [copy.deepcopy(s) for s in dummy_data.SERVICES if word in normalize_keyword(s["name"])]
-    result = _request("GET", ENDPOINTS["services"], params={"q": keyword})
-    result = result.get("services") if isinstance(result, dict) else result
-    if not isinstance(result, list):
-        raise ApiError("サービス検索の応答形式が想定と異なります．")
-    return result
+        return
+    try:
+        services = (_request("GET", ENDPOINTS["services"]) or {}).get("services", [])
+    except OfflineError:
+        return
+    local_db.replace_services(services)
+
+
+def search_services(keyword: str) -> list[dict]:
+    """定番サービスを名称で検索する。keyword が空なら全件。通信できなければ前回のマスタから探す。"""
+    if config.USE_DUMMY_DATA:
+        word = (keyword or "").strip().lower()
+        return [copy.deepcopy(s) for s in dummy_data.SERVICES if word in s["name"].lower()]
+    try:
+        return (_request("GET", ENDPOINTS["services"], params={"q": keyword}) or {}).get("services", [])
+    except OfflineError:
+        return local_db.search_services(keyword or "")
 
 
 def icon_url(icon: str | None) -> str | None:
@@ -251,7 +355,33 @@ def icon_url(icon: str | None) -> str | None:
     return icon
 
 
-# 単独試作の互換API．共通画面は上記のモジュール関数を利用する．
+# ------------------------------------------------------------------
+# 端末ごとの設定(ログアウトしても残る)
+# ------------------------------------------------------------------
+def get_yearly_mode() -> str:
+    """年額プランの計上方法("billing"=更新月に全額 / "average"=月割り)。内訳画面が使う。"""
+    return local_db.get_state("yearly_mode", "billing")
+
+
+def set_yearly_mode(mode: str) -> None:
+    """年額プランの計上方法を端末に保存する。"""
+    local_db.set_state("yearly_mode", mode)
+
+
+def last_updated() -> str | None:
+    """前回 list_subscriptions() でサーバから取得できた時刻(ISO文字列)。取得したことがなければ None。"""
+    return local_db.get_state("subscriptions_fetched_at")
+
+
+def get_user_email() -> str | None:
+    """ログイン中のメールアドレスを返す(会員登録・ログインの直後に保存したもの)。
+
+    ダミーデータのまま(signup/log_in を呼んでいない)場合は None。
+    """
+    return local_db.get_state("user_email")
+
+
+# 旧単独試作の互換クライアント．共通画面ではモジュール関数を利用する．
 class ApiClient:
     """asyncメソッドで画面を止めずに保存や通信を行う．"""
 

@@ -7,6 +7,7 @@ import api_client
 import navigation
 from api_client import ApiError
 from logic.api_bridge import call_api
+from components.service_icon import service_icon
 from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
@@ -19,7 +20,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     on_saved = on_saved or default_saved
     on_back = on_back or (lambda: navigation.go_back(page))
     message = ft.Text("", color=theme.ERROR)
-    results = ft.Column(spacing=8)
+    results = ft.Column(spacing=8, key="service-search-results")
     plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
     selected = {"service": None, "search_version": 0, "busy": False, "completed": False}
     fields = {
@@ -67,6 +68,8 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         selected["search_version"] += 1
         selected["completed"] = False
         save_button.disabled = False
+        results_host.visible = True
+        results_host.height = 50
         selected["service"] = service
         for key in ("name", "join_url", "cancel_url", "cancel_memo"):
             fields[key].read_only = True
@@ -87,14 +90,20 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         await asyncio.sleep(0.25)
         if version != selected["search_version"]:
             return
+        results_host.visible = True
+        results_host.height = 220
         results.controls = [ft.ProgressRing(width=20, height=20)]
         page.update()
         try:
             services = await call_api(api, "search_services", search.value or "")
             if version != selected["search_version"]:
                 return
-            results.controls = [ft.Button(service["name"], height=44,
-                               on_click=lambda e, service=service: choose_service(service)) for service in services]
+            results.controls = [ft.Container(
+                bgcolor=theme.GROUND, border_radius=12, padding=10,
+                on_click=lambda e, service=service: choose_service(service),
+                content=ft.Row(spacing=10, controls=[service_icon(service, size=38),
+                    theme.text(service["name"], size=14, expand=True, max_lines=2),
+                    ft.Icon(ft.Icons.CHEVRON_RIGHT, color=theme.INK_SUB)])) for service in services]
             if not services:
                 results.controls = [ft.Text("該当するサービスがありません．下の欄へ手入力できます．", color=theme.INK_SUB)]
         except ApiError as error:
@@ -112,6 +121,7 @@ def register_view(page, api=None, on_saved=None, on_back=None):
         selected["search_version"] += 1
         selected["completed"] = False
         save_button.disabled = False
+        results_host.visible = False
         selected["service"] = None
         for key in ("name", "join_url", "cancel_url", "cancel_memo"):
             fields[key].read_only = False
@@ -188,9 +198,30 @@ def register_view(page, api=None, on_saved=None, on_back=None):
     manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
     back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
     search_button = ft.Button("定番サービスを表示・検索", height=44, on_click=search_services)
-    return ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, controls=[
-        back_button, ft.Text("サブスクを追加", size=26, weight=ft.FontWeight.BOLD, color=theme.INK),
-        ft.Text("サービスを選ぶか，契約内容を手入力してください．定番の名称・URL・退会案内を変更する場合は手入力に切り替えてください．", color=theme.INK_SUB),
-        search, search_button, results,
-        manual_button, plans, *fields.values(), message, save_button,
-    ])
+    def section(title, caption, controls):
+        return ft.Container(bgcolor=theme.SURFACE, padding=16, border_radius=18,
+            border=ft.Border.all(1, theme.LINE), content=ft.Column(spacing=12, controls=[
+                theme.text(title, size=16, weight="bold"),
+                theme.text(caption, size=12, color=theme.INK_SUB), *controls]))
+
+    # 画面上端に共通の戻るボタンがあるため，フォーム内の戻る操作はフッターへまとめる．
+    results_host = ft.Container(content=results, height=220, visible=False)
+    search_panel = section("1．サービスを選ぶ", "名称で検索するか，手入力で登録できます．", [
+        search, search_button, results_host, manual_button, plans])
+    results.scroll = ft.ScrollMode.AUTO
+    details_panel = section("2．契約内容", "* は必須項目です．料金は1回の支払額です．", [
+        fields["name"], fields["plan_name"],
+        ft.Row(spacing=10, controls=[ft.Container(content=fields["cycle"], expand=1),
+                                   ft.Container(content=fields["status"], expand=1)]),
+        fields["amount"], fields["joined_at"], fields["trial_ends_at"]])
+    # 金額欄は全幅で表示し，狭い画面でも金額と単位を読み取れるようにする．
+    fields["amount"].helper = None
+    links_panel = section("3．入会・退会の情報", "URLと退会メモは任意です．パスワード自体は保存しないでください．", [
+        fields["join_url"], fields["cancel_url"], fields["cancel_memo"]])
+    body = ft.Column(expand=True, spacing=16, scroll=ft.ScrollMode.AUTO,
+                     controls=[search_panel, details_panel, links_panel, message])
+    save_button.expand = True
+    save_button.height = 50
+    footer = ft.Container(bgcolor=theme.GROUND, padding=ft.Padding.only(top=10),
+        content=ft.Row(spacing=8, controls=[back_button, save_button]))
+    return ft.Column(expand=True, spacing=0, controls=[body, footer])

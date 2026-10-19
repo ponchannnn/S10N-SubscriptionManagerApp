@@ -1,61 +1,43 @@
-# 石井担当：develop統合後の状況
+# 石井担当：最新版の統合とスマホUI
 
-2026-10-05更新．作業ブランチはishii．origin/develop（e3e6e98）を取り込み，石井のAPI仕様対応・入力検証・状態変更・並び替え改善を共通構成に結合しました．取り込み前の状態はbackup/ishii-before-develop（fd836a3）に保存しています．
+2026-10-19更新．作業ブランチは `ishii`．`origin/develop` の `9490148` を取り込み，ダウンロード内の最新版を基に画面配置とロゴを整えました．
 
-## 担当と進捗
+## 今回の変更
 
-| 石井の担当 | 計画ver.2の期間 | 状況 |
-|---|---|---|
-| 登録画面 | 10/5〜10/12 | 共通mainから開き，共通APIへ登録する構成に統合 |
-| 名称検索・定番選択 | 10/13〜10/18 | 共通マスタへ接続．プラン選択・ID引き継ぎ・古い検索応答破棄に対応 |
-| 解約／再契約，グレーアウト | 10/19〜10/24 | 小湊の詳細から操作し，共通ストアを更新する構成に統合 |
-| 更新頻度順・解約済み末尾 | 10/25〜10/28 | ホームのorderingから担当ロジックを使用．登録順はcreated_atにも対応 |
-| 結合・不具合修正 | 10/29以降，全員 | 模擬API・共通ストア・画面生成の自動テスト65件成功 |
+- ホームは3列・1ページ12件．サービス名を2行で表示し，料金・契約状態を添えました．追加ボタンはホーム右上へまとめ，左右スワイプと44pxのページ移動ボタンを用意しました．
+- 背景は淡いグレー，カードは白，主操作は深緑に統一しました．共通ヘッダー・下部タブ・画面の余白にも適用しています．
+- 登録画面は「サービスを選ぶ」「契約内容」「入会・退会の情報」の3区画．料金欄は全幅とし，登録ボタンをスクロール領域の外に置きました．検索結果にもロゴを表示します．
+- 19サービスの画像をアプリとAPIサーバの両方へ同梱しました．画像の縦横比と色を保ち，契約状態は外側のバッジと文言で示します．通信時はAPI画像を優先し，読めない場合は同梱画像，未登録サービスは頭文字に切り替えます．
+- 最新developのCookie認証・SQLiteキャッシュと，既存の石井担当の入力検証・検索・登録・解約／再契約・並び替えを接続しました．サーバの計算結果の日時・IDと入力エラー詳細を引き継ぎます．
+- 画像の原本・出典は `src/assets/icons/sources.json`，説明は `docs/mobile_ui.md` に記録しています．
 
-プロダクトロードマップの作成・更新にも石井の記載があります．既存ver.2を参照し，実装進捗はこのメモへ記録しました．PowerPointの進捗反映，年表記の確認，発表資料・デモ動画の担当機能説明は残っています．
+## 起動
 
-## 統合した構成
-
-- main.py，navigation.py，home.py，breakdown.py，deadline.py，detail.py，theme.pyはdevelopの共通構成を使います．単独確認用preview.pyとsort_selector.pyは廃止しました．
-- register_viewは共通api_clientを既定で使用し，成功時の案内と元タブへの遷移を行います．必要ならAPI・on_saved・on_backを注入できます．
-- status_actionsは詳細から共通api_clientを受け取り，成功後に詳細を再表示します．公式サイトを開いただけでは状態を変更しません．
-- logic/api_bridge.pyで同期の共通APIをasync画面から呼びます．asyncの注入APIにも対応します．
-- service_iconは共通のサイズ・バッジ・footprintを保ち，画像なしの色をIDから固定できます．
-- api_clientの同期関数が共通アプリのCookieとダミー一覧を管理します．ApiClientクラスは旧試作・自動テストとの互換用途として残しており，共通画面の保存先には使いません．共通のダミー登録はメモリ内で，再起動すると初期データに戻ります．
-
-## サーバv0.2への対応
-
-環境変数SUBMANE_API_BASE_URLはHTTPSホスト，または/api/v1まで含むURLを指定できます．サーバはユーザ確認によりまだ未完成なので，現在はダミーモードが既定です．
-
-- サービス検索・契約一覧のラッパー付き応答を読み取ります．
-- 定番登録はservice_id・plan_id，手入力はcustom_*を送信します．プラン名・金額・周期の修正を送れます．定番の名称・URL・退会案内はマスタを使い，変更時は手入力へ切り替えます．
-- POSTにstatusやnext_payment_atを送らず，トライアルはtrial_ends_atで指定します．解約はPATCH status=cancelled，再契約はPATCH status=activeと新しいjoined_atです．
-- 入力日時は日本時間として扱い，API送信時はオフセットを付けます．共通画面の旧trial_end_atはAPI側のtrial_ends_atと変換します．
-- APIのcreated_at・next_payment_atを保持し，次回支払日は取得済みのAPI値を優先します．developにある担当者の既存の日付・金額計算はダミー用に維持しています．石井の新しい日付計算は追加していません．内訳をサーバsummaryへ接続する作業は担当者との連携が必要です．
-- サーバの422エラーを入力欄へ表示します．Cookieを同一HTTPクライアントで保持し，登録失敗の自動再送やオフライン登録はしません．
-- Flet1.0.3に合わせ，詳細のダイアログ操作をshow_dialog/pop_dialogへ修正しました．
-
-## 残る結合・検証
-
-- [x] developをishiiに取り込み，共通main・ホーム・詳細に担当機能を接続．
-- [x] 共通ストアで登録・状態変更が反映されることをテスト．
-- [x] Cookie，APIのパス・項目・応答，入力エラー，通信断を模擬APIで検証．
-- [x] ホーム・詳細・期限・内訳がFlet1.0.3で生成できることを確認．
-- [ ] submane-flet側の西内担当とsubmane/views/account.pyの仮置き画面を統合．ログインUIはまだ共通mainへつながっていません．
-- [ ] API完成後，ログイン・登録・状態変更・一覧同期を実サーバで検証．
-- [ ] Cookie永続化，401時のキャッシュ破棄，ローカルSQLiteキャッシュを共通担当と接続．
-- [ ] 金額集計をサーバsummaryへ接続し，表示・期限・内訳の更新を確認．
-- [ ] Python3.12，Android実機，画面の目視，複数端末で確認．
-- [ ] ロードマップの進捗と，発表資料・デモ動画へ結果を反映．
-
-## 起動とテスト
-
-今回の検証環境はPython3.14.4，Flet1.0.3，flet-charts1.0.3です．起動引数--webは旧単独版のもので，共通mainでは使用しません．
+依存関係は最新developと同じFlet 1.0.4です．初回は `./setup.ps1` を実行し，続いて `./run.ps1` を実行します．既存の仮想環境は `pip install -r requirements.txt` で更新してください．
 
 ```powershell
-cd 'C:/Users/Yuto/ICTⅡ/S10N-SubscriptionManagerApp/submane'
-& 'C:/Users/Yuto/ICTⅡ/.venv/Scripts/python.exe' ./src/main.py
-& 'C:/Users/Yuto/ICTⅡ/.venv/Scripts/python.exe' -m pytest -q
+cd 'C:/Users/Yuto/Downloads/S10N-SubscriptionManagerApp-develop/submane'
+$env:SUBMANE_USE_DUMMY_DATA = 'true'
+& 'C:/Users/Yuto/ICTⅡ/.venv-ui/Scripts/python.exe' ./src/main.py
 ```
 
-HTMLのdocs/register.htmlは独立した登録デモです．Flet・共通APIと同期しません．src・tests・HTML・起動スクリプトのコード全文はdocs/complete_code.mdに掲載しています．
+このPCの検証用環境はPython 3.14，Flet 1.0.4です．従来の `.venv` は変更せず，別の `.venv-ui` を用意しました．
+
+API接続時は起動前に設定します．URLは `/api/v1` を含めず，サーバのホストまでを指定してください．
+
+```powershell
+$env:SUBMANE_USE_DUMMY_DATA = 'false'
+$env:SUBMANE_API_BASE_URL = 'https://実際のAPIホスト'
+```
+
+未指定時はダミーで起動します．ダミーの登録データはアプリ終了時に消えます．実APIのロゴパス変更を既存DBへ反映する際は，API担当が通常のマスタ更新手順で `mane_server/db/seeds/services.yml` を反映してください．画像本体は `mane_server/public/icons` に配置済みです．
+
+## 確認と残り
+
+アプリ側の操作・API契約・キャッシュ・画像整合性・320/390/430pxを想定したコントロール構成をpytestで確認しています．Webサーバと静的画像のHTTP応答も確認対象です．ブラウザの目視，Android実機，稼働中のRails/PostgreSQLとの結合は未確認です．実サービスの金額やURLの調査・API公開は担当者と確認してください．
+
+HTMLの `docs/register.html` は従来の独立デモであり，今回のFletアプリの画面とは同期しません．ソースコード全文は `docs/complete_code.md` に保存しています．
+
+## Webプレビューの依存関係
+
+Flet 1.0.4のWebサーバはFastAPI 0.146.0では `openapi_prefix` 引数のエラーになりました．検証済みの0.142.2を開発用依存関係に固定しています．FastAPI側は0.145.0でこの引数を削除しています（[公式リリースノート](https://fastapi.tiangolo.com/release-notes/#01450)）．これはFletのWebプレビュー用であり，Rails APIの構成には影響しません．

@@ -6,13 +6,16 @@
 """
 
 
+from service_assets import bundled_icon
+
+
 def _sub(sub_id, name, cycle, amount, joined_at, status="active", trial_end_at=None, plan_name=None):
     """ダミーのサブスク1件を作る。"""
     slug = f"service-{sub_id}"
     return {
         "id": sub_id,
         "name": name,
-        "icon": None,  # APIからアイコンURLを受け取るまでは頭文字のタイルを表示
+        "icon": bundled_icon({"name": name}),  # 授業用モックでも同梱画像を表示
         "plan_name": plan_name or ("月額プラン" if cycle == "monthly" else "年額プラン"),
         "cycle": cycle,
         "amount": amount,
@@ -53,7 +56,7 @@ SERVICES = [
     {
         "id": sub["id"],
         "name": sub["name"],
-        "icon": None,
+        "icon": sub["icon"],
         "join_url": sub["join_url"],
         "cancel_url": sub["cancel_url"],
         "cancel_memo": sub["cancel_memo"],

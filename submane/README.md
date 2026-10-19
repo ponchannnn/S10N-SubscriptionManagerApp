@@ -1,6 +1,6 @@
-> 2026-10-05：ishiiにorigin/developを取り込み，共通のmain・ホーム・内訳・期限・詳細を基準に石井担当を結合しました．登録と状態変更は共通api_clientのCookie・ダミー一覧を共有します．サーバAPIの接続はv0.2に対応し，環境変数SUBMANE_USE_DUMMY_DATA，SUBMANE_API_BASE_URLで設定できます．詳しい現状と残作業は [石井の結合メモ](docs/ishii.md)，コード全文は [全コード](docs/complete_code.md) を参照してください．以下には従来の設計メモも残っています．
-
 # サブマネ 開発ガイド(チームE1)
+
+> **ishiiブランチ：2026-10-19更新**．最新develop（9490148）を統合し，スマホ向けのホーム・登録画面・配色と19サービスのロゴを改善しました．起動手順・確認範囲は [docs/ishii.md](docs/ishii.md)，画像出典は [docs/mobile_ui.md](docs/mobile_ui.md) を参照してください．Fletは1.0.4です．環境変数 `SUBMANE_USE_DUMMY_DATA` 未指定時はダミーで起動します．
 
 複数のサブスクリプションを一元管理し、支払期日と費用の見える化、解約・再契約のしやすさによって、解約忘れや無駄な出費を防ぐAndroidアプリです。
 このファイルは、5人が同じ前提で開発を進めるための取り決めをまとめたものです。内容を変えるときはチームに共有してから更新してください。
@@ -41,9 +41,8 @@ cd submane
 python3 -m venv .venv
 source .venv/bin/activate        # Windows は .venv\Scripts\activate
 
-# pyproject.toml の dependencies / dependency-groups.dev と同じバージョンを入れる
-pip install flet==1.0.3 flet-charts==1.0.3 httpx==0.28.1 \
-            flet-cli==1.0.3 flet-desktop==1.0.3 flet-web==1.0.3 pytest
+# pyproject.toml と同じバージョンをまとめて入れる(バージョンを上げたときはrequirements.txtも直すこと)
+pip install -r requirements.txt
 ```
 
 Python 3.12以上であれば動作します(3.14でも動作確認済み)。
@@ -92,11 +91,13 @@ APKのビルドには Flutter SDK、Android SDK、JDK が必要で、準備に�
 submane/
 ├── README.md
 ├── pyproject.toml          # アプリ名、依存ライブラリ、ビルド設定
+├── requirements.txt        # pip install -r 用。pyproject.tomlと同じバージョンを並べたもの
 ├── src/
 │   ├── main.py             # 起動、画面の切り替え
 │   ├── config.py           # APIのURL、ダミーデータの切り替え
 │   ├── theme.py            # 色・フォント・余白(全画面共通)
 │   ├── api_client.py       # APIの呼び出しをまとめる
+│   ├── local_db.py         # 端末内SQLite(ログイン状態・設定・前回取得分のキャッシュ。docs/local_db.md参照)
 │   ├── dummy_data.py       # APIができるまで使うダミーデータ
 │   ├── components/
 │   │   ├── app_header.py   # ヘッダー(アプリ名、追加、アカウント)
@@ -117,7 +118,8 @@ submane/
 │       └── icons/
 ├── tests/
 │   ├── test_dates.py
-│   └── test_payments.py
+│   ├── test_payments.py
+│   └── test_local_db.py
 └── docs/
     └── home_mock.html      # ホーム画面の見本(見た目の参考用)
 ```
@@ -232,6 +234,7 @@ APIの仕様を決めるのはAPI担当です。この章は「アプリ側が�
 - APIの呼び出しは `api_client.py` にまとめ、各画面から直接 `httpx` を呼ばない
 - `api_client.py` の関数は、`USE_DUMMY_DATA` が `True` の間は `dummy_data.py` の内容を返す。画面のコードはダミーか本物かを意識しない
 - APIの項目名が変わっても画面を直さずに済むよう、項目名の変換は `api_client.py` の中で行う
+- 本物のAPI(`USE_DUMMY_DATA = False`)に繋いだときの端末内キャッシュ・オフライン時の動きは `docs/local_db.md` にまとめている。画面から `local_db.py` を直接呼ばないのはダミーデータと同じ理由
 
 ## 6. 画面の切り替え
 

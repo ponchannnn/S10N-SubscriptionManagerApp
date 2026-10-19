@@ -1,0 +1,173 @@
+{
+  "netflix": {
+    "filename": "netflix.png",
+    "name": "Netflix",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/f6/ed/5f/f6ed5f40-2e41-30c1-d6ff-8d12f8c67c3e/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/netflix/id363590051?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "公式Nシンボルを優先．赤色・形状・余白の指定を確認．"
+  },
+  "spotify": {
+    "filename": "spotify.png",
+    "name": "Spotify",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b2/af/e8/b2afe87d-2d6a-8e4b-01bf-73b5752996dc/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/spotify-%E9%9F%B3%E6%A5%BD%E3%81%A8%E3%83%9D%E3%83%83%E3%83%89%E3%82%AD%E3%83%A3%E3%82%B9%E3%83%88/id324684580?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "公式Primary Logo候補．https://developer.spotify.com/documentation/design の色・余白・最小サイズ指定を確認．"
+  },
+  "audible": {
+    "filename": "audible.png",
+    "name": "Audible",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/5b/7e/87/5b7e8765-c4b6-34c5-8bc7-38c0404ec7f6/AppIcon-0-0-1x_U007emarketing-0-0-0-8-0-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/amazon-audible-%E3%82%AA%E3%83%BC%E3%83%87%E3%82%A3%E3%82%AA%E3%83%96%E3%83%83%E3%82%AF/id379693831?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "公式ロゴ配布あり．プレス向け用途・クレジット・同梱ガイドラインを確認．"
+  },
+  "unext": {
+    "filename": "unext.png",
+    "name": "U-NEXT",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/bd/31/6a/bd316abf-9655-c9a4-3061-c9835d7139d8/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/u-next-%E6%98%A0%E7%94%BB%E3%82%84%E3%83%89%E3%83%A9%E3%83%9E-%E3%82%A2%E3%83%8B%E3%83%A1%E3%81%AA%E3%81%A9%E3%81%AE%E5%8B%95%E7%94%BB%E3%81%8C%E8%A6%8B%E6%94%BE%E9%A1%8C/id882477693?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "公式アプリのアイコン候補．サービス提供元はU-NEXT Co.,Ltd.で確認．"
+  },
+  "youtube-premium": {
+    "filename": "youtube-premium.png",
+    "name": "YouTube Premium",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/9d/cc/4d/9dcc4d29-3199-cfdb-da1e-64ec30a4046b/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/youtube/id544007664?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "確認できた画像はYouTubeアプリのアイコン．Premium専用ロゴと同一ではない．サービス名と組み合わせる代案として検討し，正式なPremium素材は別途確認．"
+  },
+  "disney-plus": {
+    "filename": "disney-plus.png",
+    "name": "Disney+",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/27/5c/3c/275c3cd1-638d-f7e6-160d-a047221f7672/AppIcon-0-0-1x_U007emarketing-0-8-0-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/disney/id1446075923?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "公式プレスにロゴ配布案内あり．取得ツールでは403のためファイルの現物・利用条件は未確認．"
+  },
+  "fod-premium": {
+    "filename": "fod-premium.png",
+    "name": "FODプレミアム",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f4/48/c1/f448c110-58c9-9309-36e6-bba1859bfe70/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/fod-%E3%83%89%E3%83%A9%E3%83%9E%E3%82%84%E3%82%A2%E3%83%8B%E3%83%A1%E3%81%AA%E3%81%A9%E3%83%86%E3%83%AC%E3%83%93%E3%81%AE%E5%8B%95%E7%94%BB%E3%81%8C%E8%A6%8B%E6%94%BE%E9%A1%8C-%E8%A6%8B%E9%80%83%E3%81%97%E9%85%8D%E4%BF%A1%E3%82%82/id945241274?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "FOD公式アプリのアイコン候補．Premiumは料金プランであり，FODアプリと区別して登録する．"
+  },
+  "dazn": {
+    "filename": "dazn.png",
+    "name": "DAZN",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/42/c0/45/42c0453c-5cbd-dcc6-a97b-16e67e001cab/AppIcon-0-0-1x_U007emarketing-0-8-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/dazn-%E3%83%80%E3%82%BE%E3%83%BC%E3%83%B3-%E3%82%B9%E3%83%9D%E3%83%BC%E3%83%84%E3%82%92%E3%83%A9%E3%82%A4%E3%83%96%E4%B8%AD%E7%B6%99/id1129523589?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "DAZN公式アプリのアイコン候補．"
+  },
+  "apple-music": {
+    "filename": "apple-music.png",
+    "name": "Apple Music",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c2/74/89/c27489c2-2c63-2e32-efee-b0f59b3184ef/musicCalistoga-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/apple-music/id1108187390?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "公式のバッジ・アイコン案内あり．Apple Music Identity Guidelinesの用途を確認．"
+  },
+  "hulu": {
+    "filename": "hulu.png",
+    "name": "Hulu",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/41/42/97/414297cd-28e5-cdc0-79d6-720a6c9c69b7/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/hulu-%E3%83%95%E3%83%BC%E3%83%AB%E3%83%BC-%E4%BA%BA%E6%B0%97%E3%83%89%E3%83%A9%E3%83%9E%E3%82%84%E6%98%A0%E7%94%BB-%E3%82%A2%E3%83%8B%E3%83%A1%E3%81%AA%E3%81%A9%E3%81%8C%E8%A6%8B%E6%94%BE%E9%A1%8C/id549416492?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "日本向けHJ Holdings, Inc.のHuluアプリを確認．米国版と取り違えない．"
+  },
+  "kindle-unlimited": {
+    "filename": "kindle-unlimited.png",
+    "name": "Kindle Unlimited",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/41/5b/7f/415b7f67-c651-af24-dc35-abe0682108f4/AppIcon-0-0-1x_U007emarketing-0-7-0-sRGB-0-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/amazon-kindle/id302584613?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "取得候補はAmazon Kindleアプリの画像．Kindle Unlimited専用ロゴではない．専用素材は今回未確定．"
+  },
+  "lemino": {
+    "filename": "lemino.png",
+    "name": "Lemino",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/8b/54/1f/8b541f7a-3bcf-76e3-eb5e-d86ce8d83245/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/lemino-%E3%83%AC%E3%83%9F%E3%83%8E-%E9%9F%B3%E6%A5%BD%E3%83%A9%E3%82%A4%E3%83%96%E3%82%84%E3%82%B9%E3%83%9D%E3%83%BC%E3%83%84-%E3%83%89%E3%83%A9%E3%83%9E%E7%AD%89%E3%81%8C%E8%A6%8B%E6%94%BE%E9%A1%8C/id1641218070?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "NTTドコモの公式アプリを確認．同名の別開発者アプリと取り違えない．"
+  },
+  "abema-premium": {
+    "filename": "abema-premium.png",
+    "name": "ABEMAプレミアム",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/f5/90/27/f59027c3-4be8-7156-3b5e-610fc48d3499/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/abema-%E3%82%A2%E3%83%99%E3%83%9E-%E6%96%B0%E3%81%97%E3%81%84%E6%9C%AA%E6%9D%A5%E3%81%AEtv/id1074866833?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "ABEMAアプリのアイコン候補．Premiumは有料プラン名として別途表示する．"
+  },
+  "d-anime-store": {
+    "filename": "d-anime-store.png",
+    "name": "dアニメストア",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b8/f9/5b/b8f95b04-a534-f834-c38a-86114b459c53/AppIcon-0-0-1x_U007emarketing-0-7-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/d%E3%82%A2%E3%83%8B%E3%83%A1%E3%82%B9%E3%83%88%E3%82%A2-%E3%82%A2%E3%83%8B%E3%83%A1%E5%8B%95%E7%94%BB%E8%A6%8B%E6%94%BE%E9%A1%8C%E3%82%A2%E3%83%97%E3%83%AA-%E3%83%9E%E3%83%AB%E3%83%81%E3%83%87%E3%83%90%E3%82%A4%E3%82%B9%E5%AF%BE%E5%BF%9C/id728214964?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "NTTドコモの公式アプリのアイコン候補．"
+  },
+  "nhk-on-demand": {
+    "filename": "nhk-on-demand.png",
+    "name": "NHKオンデマンド",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ce/6c/8a/ce6c8aea-cc2a-4059-c573-e1c33e62bda3/AppIcon-1x_U007ephone-0-11-0-sRGB-85-220-0.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/nhk%E3%82%AA%E3%83%B3%E3%83%87%E3%83%9E%E3%83%B3%E3%83%89/id606706412?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "NHK公式アプリのアイコン候補．NHK ONEなど別サービスと区別する．"
+  },
+  "chatgpt": {
+    "filename": "chatgpt.png",
+    "name": "ChatGPT",
+    "source_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/30/23/eb/3023ebb0-1e40-6314-9909-f490a704b5d1/AppIcon-0-0-1x_U007epad-0-0-0-1-0-85-220.png/512x512bb.png",
+    "source_page": "https://apps.apple.com/jp/app/chatgpt/id6448311069?uo=4",
+    "kind": "公式アプリのアイコン",
+    "checked_on": "2026-10-19",
+    "note": "OpenAI公式のアプリ画像とブランドガイドを確認．サブマネ自身のロゴとして使用しない．"
+  },
+  "adobe-cc": {
+    "filename": "adobe-cc.svg",
+    "name": "Adobe CC",
+    "source_url": "https://main--cc--adobecom.aem.live/cc-shared/assets/img/product-icons/svg/creative-cloud.svg",
+    "source_page": "https://www.adobe.com/creativecloud.html",
+    "kind": "サービスロゴ",
+    "checked_on": "2026-10-19",
+    "note": "原本を加工せず保存"
+  },
+  "amazon-prime": {
+    "name": "Amazonプライム",
+    "filename": "amazon-prime.svg",
+    "source_url": "https://cdn.jsdelivr.net/npm/simple-icons@14.0.0/icons/amazonprime.svg",
+    "source_page": "https://github.com/simple-icons/simple-icons/tree/14.0.0",
+    "kind": "Simple Iconsのブランド図形（公式配布ファイルではない）",
+    "checked_on": "2026-10-19",
+    "note": "授業内利用．Prime Videoのロゴと区別してPrimeの図形を使用．原本を無加工で保存．"
+  },
+  "icloud-plus": {
+    "name": "iCloud+",
+    "filename": "icloud-plus.svg",
+    "source_url": "https://cdn.jsdelivr.net/npm/simple-icons@14.0.0/icons/icloud.svg",
+    "source_page": "https://github.com/simple-icons/simple-icons/tree/14.0.0",
+    "kind": "Simple Iconsのブランド図形（公式配布ファイルではない）",
+    "checked_on": "2026-10-19",
+    "note": "授業内利用．原本を無加工で保存．iCloud+はiCloudのブランド図形で識別し，+を含む名称を併記する．"
+  }
+}
