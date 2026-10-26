@@ -52,4 +52,12 @@ def test_ordering_keeps_cancelled_last():
     assert by_frequency == [1, 4, 2, 3]
     by_registered = [s["id"] for s in ordering.sort_subscriptions(SUBS, ordering.ORDER_REGISTERED)]
     assert by_registered == [1, 2, 4, 3]
-    assert ordering.count_by_status(SUBS) == {"active": 3, "trial": 1, "cancelled": 1}
+    assert ordering.count_by_status(SUBS) == {"active": 2, "trial": 1, "cancelled": 1}
+
+
+def test_filter_by_status_keeps_order_and_input():
+    assert [s["id"] for s in ordering.filter_by_status(SUBS, "active")] == [1, 2]
+    assert [s["id"] for s in ordering.filter_by_status(SUBS, "trial")] == [4]
+    assert [s["id"] for s in ordering.filter_by_status(SUBS, "cancelled")] == [3]
+    everything = ordering.filter_by_status(SUBS, None)
+    assert everything == SUBS and everything is not SUBS

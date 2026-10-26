@@ -27,6 +27,7 @@ from views.breakdown import breakdown_view
 from views.deadline import deadline_view
 from views.detail import detail_view
 from views.home import home_view
+from views.notifications import notifications_view
 from views.register import register_view
 
 
@@ -45,6 +46,7 @@ SCREENS = {
     navigation.DEADLINE: Screen(deadline_view),
     navigation.REGISTER: Screen(register_view, title="サブスクを追加"),
     navigation.ACCOUNT: Screen(account_view, title="アカウント"),
+    navigation.NOTIFICATIONS: Screen(notifications_view, title="お知らせ"),
 }
 DETAIL_SCREEN = Screen(detail_view, title="サブスクの詳細")
 
@@ -157,7 +159,8 @@ def main(page: ft.Page) -> None:
             if version != _route_version["n"]:
                 return
             page.views.pop()
-            page.views.append(_shell(route, header, content, footer))
+            # 読み込んだ最新の一覧でベルの件数を数え直すため，ヘッダーを作り直す
+            page.views.append(_shell(route, app_header(page), content, footer))
         else:
             # タブ画面の上に重ねる。端末の「戻る」で元のタブ画面に戻れる
             base = navigation.last_tab(page)

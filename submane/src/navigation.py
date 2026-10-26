@@ -17,6 +17,7 @@ BREAKDOWN = "/breakdown"
 DEADLINE = "/deadline"
 REGISTER = "/register"
 ACCOUNT = "/account"
+NOTIFICATIONS = "/notifications"
 DETAIL_PREFIX = "/detail/"
 
 TAB_ROUTES = (HOME, BREAKDOWN, DEADLINE)
