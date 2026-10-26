@@ -1,6 +1,6 @@
 # アプリの全コード
 
-2026-10-19更新．ishiiブランチのソース・テスト・設定・起動スクリプト・独立HTMLデモの全文です．画像の取得元はsrc/assets/icons/sources.jsonに保存しています．
+2026-10-26更新．ishiiブランチのソース・テスト・設定・起動スクリプト・独立HTMLデモの全文です．config.pyはGit保存済みの共通設定を掲載しています．
 
 ## docs/home_mock.html
 
@@ -1472,6 +1472,69 @@ def app_header(page, title=None, show_back=False, show_actions=True):
         content=ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=controls))
 ```
 
+## src/components/datetime_input.py
+
+```python
+"""日付と時刻を順に選び，確定時だけ登録フォームへ反映する．"""
+from datetime import datetime
+
+import flet as ft
+
+from logic.subscriptions import JST, parse_time
+
+
+def attach_datetime_picker(page, field, *, minimum=None):
+    """日本時間の入力欄に，カレンダーと24時間表記の時刻選択を付ける．"""
+    def open_picker(event=None):
+        if field.disabled:
+            return
+        now = datetime.now(JST).replace(tzinfo=None, second=0, microsecond=0)
+        lower = datetime(1900, 1, 1)
+        if minimum:
+            try:
+                lower = parse_time(minimum()).astimezone(JST).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                pass
+        try:
+            seed = parse_time(field.value).astimezone(JST).replace(tzinfo=None)
+        except (ValueError, TypeError):
+            seed = now
+        seed = min(max(seed, lower), datetime(2100, 12, 31, 23, 59))
+        locale = ft.Locale(language_code="ja", country_code="JP")
+
+        def date_selected(event):
+            date = event.control.value
+            if date is None:
+                return
+
+            def time_selected(event):
+                time = event.control.value
+                if time is None or field.disabled:
+                    return
+                field.value = datetime.combine(date.date(), time).strftime("%Y-%m-%dT%H:%M")
+                field.error = None
+                page.update()
+
+            page.show_dialog(ft.TimePicker(
+                value=seed.time(), locale=locale,
+                hour_format=ft.TimePickerHourFormat.H24,
+                entry_mode=ft.TimePickerEntryMode.INPUT,
+                help_text="時刻を選択（日本時間）", hour_label_text="時", minute_label_text="分",
+                confirm_text="確定", cancel_text="キャンセル", on_change=time_selected))
+
+        page.show_dialog(ft.DatePicker(
+            value=seed, first_date=lower.date(), last_date=datetime(2100, 12, 31),
+            locale=locale, help_text=field.label.replace(" *", "") + "の日付を選択",
+            confirm_text="時刻を選ぶ", cancel_text="キャンセル", on_change=date_selected))
+
+    field.read_only = True
+    field.on_click = open_picker
+    field.helper = "タップして日付と時刻を選択（日本時間）"
+    field.suffix_icon = ft.IconButton(
+        icon=ft.Icons.CALENDAR_MONTH_OUTLINED, tooltip="日付と時刻を選択",
+        width=44, height=44, on_click=open_picker)
+```
+
 ## src/components/feedback.py
 
 ```python
@@ -1572,13 +1635,18 @@ def service_icon(sub, size=72, color_index=None, ring_color=theme.GROUND):
         content=image, tooltip=name)
     controls = [tile]
     if trial or cancelled:
-        controls.append(ft.Container(width=BADGE_SIZE, height=BADGE_SIZE, right=0, bottom=0,
-            bgcolor=theme.OFF_INK if cancelled else theme.TRIAL,
-            border_radius=12, border=ft.Border.all(2, ring_color), alignment=ft.Alignment.CENTER,
-            content=ft.Icon(ft.Icons.CHECK if cancelled else ft.Icons.ACCESS_TIME,
-                            size=13, color=theme.ON_ACCENT)))
+        controls.append(status_badge(sub['status'], ring_color, right=0, bottom=0))
     width, height = footprint(size)
     return ft.Stack(width=width, height=height, controls=controls)
+
+
+def status_badge(status, ring_color=theme.GROUND, **position):
+    """カードと凡例で同じ時計・チェックと配色を使う．"""
+    return ft.Container(width=BADGE_SIZE, height=BADGE_SIZE,
+        bgcolor=theme.OFF_INK if status == 'cancelled' else theme.TRIAL,
+        border_radius=12, border=ft.Border.all(2, ring_color), alignment=ft.Alignment.CENTER,
+        content=ft.Icon(ft.Icons.CHECK if status == 'cancelled' else ft.Icons.ACCESS_TIME,
+                        size=13, color=theme.ON_ACCENT), **position)
 
 
 def status_label(sub):
@@ -1713,6 +1781,71 @@ def tab_bar(page: ft.Page, current_route: str | None) -> ft.Control:
             controls=[_tab(page, route, label, icon, route == current_route) for route, label, icon in TABS],
         ),
     )
+```
+
+## src/components/tab_slider.py
+
+```python
+"""下部タブの位置を保ち，画面の中身を左右にスライドする．"""
+import asyncio
+
+import flet as ft
+
+import navigation
+
+ANIMATION_MS = 280
+
+
+class TabSlider:
+    """同じStackを使い続け，タブの並び順に応じて遷移方向を変える．"""
+    def __init__(self, page, route, content):
+        self.page = page
+        self.route = route
+        self.generation = 0
+        self.root = ft.Stack(expand=True, clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                             controls=[self._layer(content)])
+
+    @staticmethod
+    def _layer(content, offset=0):
+        return ft.Container(content=content, left=0, top=0, right=0, bottom=0,
+                            offset=ft.Offset(offset, 0))
+
+    def show(self, route, content):
+        self.generation += 1
+        generation = self.generation
+        if route == self.route:
+            self.root.controls = [self._layer(content)]
+            return self.root.controls[0]
+        direction = 1 if navigation.TAB_ROUTES.index(route) > navigation.TAB_ROUTES.index(self.route) else -1
+        self.route = route
+        outgoing = self.root.controls[-1]
+        outgoing.animate_offset = None
+        outgoing.offset = ft.Offset(0, 0)
+        incoming = self._layer(content, direction)
+        self.root.controls = [outgoing, incoming]
+        self.page.update()
+        self.page.run_task(self._animate, outgoing, incoming, direction, generation)
+        return incoming
+
+    async def _animate(self, outgoing, incoming, direction, generation):
+        # 初期位置を描画してから，次のフレームで移動を開始する．
+        await asyncio.sleep(0.04)
+        if generation != self.generation:
+            return
+        animation = ft.Animation(ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC)
+        outgoing.animate_offset = animation
+        incoming.animate_offset = animation
+        outgoing.offset = ft.Offset(-direction, 0)
+        incoming.offset = ft.Offset(0, 0)
+        self.page.update()
+        await asyncio.sleep(ANIMATION_MS / 1000)
+        if generation == self.generation:
+            self.root.controls = [incoming]
+            self.page.update()
+
+    def cancel(self):
+        """詳細・登録への移動やログアウト時に，古いアニメーションを無効化する．"""
+        self.generation += 1
 ```
 
 ## src/config.py
@@ -2388,6 +2521,7 @@ def reactivation_patch(subscription, joined_at):
 ヘッダーと下部タブはここで全画面に付けるので、各画面は中身だけを返せばよい。
 """
 
+import asyncio
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -2402,6 +2536,7 @@ import theme
 from components import feedback
 from components.app_header import app_header
 from components.tab_bar import tab_bar
+from components.tab_slider import TabSlider
 from views.account import account_view
 from views.breakdown import breakdown_view
 from views.deadline import deadline_view
@@ -2434,6 +2569,11 @@ def _resolve(route: str) -> Screen | None:
     if route.startswith(navigation.DETAIL_PREFIX):
         return DETAIL_SCREEN
     return SCREENS.get(route)
+
+
+def _loading() -> ft.Control:
+    """通信中も操作できるように，取得先の画面にローディングを表示する．"""
+    return ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=ft.ProgressRing())
 
 
 def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Control | None) -> ft.View:
@@ -2477,43 +2617,70 @@ def main(page: ft.Page) -> None:
         window.width = theme.BASE_WIDTH
         window.height = theme.BASE_HEIGHT
 
-    def build_content(screen: Screen) -> ft.Control:
-        """画面の中身を作る。画面側で想定外のエラーが起きてもアプリ全体は止めない。"""
+    async def build_content(screen: Screen) -> ft.Control:
+        """同期APIを別スレッドで呼び，画面遷移とローディングを止めない．"""
         try:
-            return screen.view(page)
-        except Exception:  # noqa: BLE001 開発中に原因を追えるよう、内容はコンソールに出す
+            return await asyncio.to_thread(screen.view, page)
+        except Exception:
             traceback.print_exc()
-            return feedback.error_panel(page, "画面の表示中にエラーが起きました。")
+            return feedback.error_panel(page, "画面の表示中にエラーが起きました．")
 
-    def show_route(e=None) -> None:
-        """今のルートに合わせて画面を組み立てる。"""
+    tab_state = {"view": None, "slider": None, "footer": None}
+    route_version = 0
+
+    def clear_tab_state():
+        if tab_state["slider"]:
+            tab_state["slider"].cancel()
+        tab_state.update(view=None, slider=None, footer=None)
+
+    async def show_route(e=None) -> None:
+        """Viewを維持してスライドし，古い通信結果は反映しない．"""
+        nonlocal route_version
         route = getattr(e, "route", None) or page.route or navigation.HOME
         screen = _resolve(route)
         if screen is None:
             navigation.go(page, navigation.HOME)
             return
+        route_version += 1
+        version = route_version
 
-        page.views.clear()
-
-        # 未ログインなら会員登録・ログイン画面だけを出す
         if not api_client.is_logged_in():
+            clear_tab_state()
+            page.views.clear()
             if route != navigation.ACCOUNT:
                 navigation.go(page, navigation.ACCOUNT)
                 return
-            header = app_header(page, show_actions=False)
-            page.views.append(_shell(route, header, build_content(screen), footer=None))
-            page.update()
-            return
-
-        if route in navigation.TAB_ROUTES:
+            target = ft.Container(content=_loading(), expand=True)
+            page.views.append(_shell(route, app_header(page, show_actions=False), target, footer=None))
+        elif route in navigation.TAB_ROUTES:
             navigation.remember_tab(page, route)
-            page.views.append(_shell(route, app_header(page), build_content(screen), tab_bar(page, route)))
+            if tab_state["view"] is not None and len(page.views) == 1 and page.views[0] is tab_state["view"]:
+                tab_state["view"].route = route
+                tab_state["footer"].content = tab_bar(page, route)
+                target = tab_state["slider"].show(route, _loading())
+            else:
+                clear_tab_state()
+                page.views.clear()
+                slider = TabSlider(page, route, _loading())
+                footer = ft.Container(content=tab_bar(page, route))
+                view = _shell(route, app_header(page), slider.root, footer)
+                tab_state.update(view=view, slider=slider, footer=footer)
+                page.views.append(view)
+                target = slider.root.controls[0]
         else:
-            # タブ画面の上に重ねる。端末の「戻る」で元のタブ画面に戻れる
+            clear_tab_state()
+            page.views.clear()
             base = navigation.last_tab(page)
             page.views.append(_shell(base, app_header(page), ft.Container(), tab_bar(page, base)))
             header = app_header(page, title=screen.title, show_back=True, show_actions=False)
-            page.views.append(_shell(route, header, build_content(screen), tab_bar(page, None)))
+            target = ft.Container(content=_loading(), expand=True)
+            page.views.append(_shell(route, header, target, tab_bar(page, None)))
+
+        page.update()
+        content = await build_content(screen)
+        if version != route_version:
+            return
+        target.content = content
         page.update()
 
     def on_view_pop(e) -> None:
@@ -2523,7 +2690,7 @@ def main(page: ft.Page) -> None:
     navigation.set_reload_handler(page, show_route)
     page.on_route_change = show_route
     page.on_view_pop = on_view_pop
-    show_route()
+    page.run_task(show_route)
 
 
 if __name__ == "__main__":
@@ -2581,10 +2748,14 @@ def go_back(page: ft.Page) -> None:
 
 
 def reload(page: ft.Page) -> None:
-    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。"""
+    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。
+
+    main.py の show_route は非同期(通信中はローディング表示を出す)なので、
+    ここで直接呼ばず page.run_task に渡して実行する。
+    """
     handler = page.session.store.get(_RELOAD_KEY)
     if handler:
-        handler()
+        page.run_task(handler)
 
 
 def get_sub_id(page: ft.Page) -> str | None:
@@ -2740,6 +2911,8 @@ def yen(amount: int) -> str:
 未ログインなら新規登録・ログインを切り替えられるフォームを返す。
 """
 
+import asyncio
+
 import flet as ft
 
 import api_client
@@ -2760,16 +2933,20 @@ def _signed_in_view(page: ft.Page) -> ft.Control:
     """ログイン済みのときの中身。"""
     email = api_client.get_user_email() or "ダミーデータでログイン中"
 
-    def log_out(event):
-        api_client.log_out()
+    async def log_out(event):
+        log_out_button.disabled = True
+        log_out_button.content = ft.ProgressRing(width=16, height=16)
+        page.update()
+        await asyncio.to_thread(api_client.log_out)
         navigation.reload(page)
 
+    log_out_button = ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN)
     return ft.Column(
         spacing=16,
         controls=[
             theme.text("ログイン中", size=26, weight="bold"),
             theme.text(email, size=14, color=theme.INK_SUB),
-            ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN),
+            log_out_button,
         ],
     )
 
@@ -2802,7 +2979,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
 
     toggle_button.on_click = toggle_mode
 
-    def submit(event):
+    async def submit(event):
         if state["busy"]:
             return
         email_field.error = None
@@ -2820,13 +2997,15 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
 
         state["busy"] = True
         submit_button.disabled = True
+        is_signup = state["mode"] == "signup"
+        submit_button.content = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=8, controls=[
+            ft.ProgressRing(width=16, height=16, color=theme.ON_ACCENT), ft.Text("送信しています…"),
+        ])
         toggle_button.disabled = True
         page.update()
         try:
-            if state["mode"] == "signup":
-                api_client.sign_up(email_field.value.strip(), password_field.value)
-            else:
-                api_client.log_in(email_field.value.strip(), password_field.value)
+            action = api_client.sign_up if is_signup else api_client.log_in
+            await asyncio.to_thread(action, email_field.value.strip(), password_field.value)
         except ApiError as error:
             message.value = str(error)
         else:
@@ -2835,6 +3014,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
         finally:
             state["busy"] = False
             submit_button.disabled = False
+            submit_button.content = "新規登録" if is_signup else "ログイン"
             toggle_button.disabled = False
             page.update()
 
@@ -3190,7 +3370,6 @@ def deadline_view(page: ft.Page) -> ft.Control:
         spacing=16,
         controls=[
             theme.text("支払期日が近いサブスク", size=22, weight="bold"),
-            theme.text("解約の検討やチャージ確認にお役立てください。", size=13, color=theme.INK_SUB),
             ft.Column(spacing=10, controls=cards),
         ],
     )
@@ -3204,6 +3383,8 @@ def deadline_view(page: ft.Page) -> ft.Control:
 登録済みサブスク1件の詳細表示、入会・退会ページへの遷移、解約・再契約、削除を行う。
 解約・再契約の確認フローは components.status_actions に委ねる(登録画面とは独立して作られた部品)。
 """
+
+import asyncio
 
 import flet as ft
 
@@ -3232,19 +3413,22 @@ def detail_view(page: ft.Page) -> ft.Control:
         return feedback.message_panel(str(error), icon=ft.Icons.ERROR_OUTLINE)
 
     def open_delete_dialog(event):
-        def confirm_delete(event):
-            api_client.delete_subscription(sub_id)
+        async def confirm_delete(event):
+            cancel_button.disabled = True
+            delete_button.disabled = True
+            delete_button.content = ft.ProgressRing(width=16, height=16, color=theme.DANGER)
+            dialog.update()
+            await asyncio.to_thread(api_client.delete_subscription, sub_id)
             page.pop_dialog()
             page.show_dialog(ft.SnackBar(ft.Text("削除しました．")))
             navigation.go_back(page)
 
+        cancel_button = ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog())
+        delete_button = ft.TextButton("削除", on_click=confirm_delete)
         dialog = ft.AlertDialog(
             title=ft.Text("サブスクの削除"),
             content=ft.Text(f"「{item.get('name')}」を一覧から削除してもよろしいですか．"),
-            actions=[
-                ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog()),
-                ft.TextButton("削除", on_click=confirm_delete),
-            ],
+            actions=[cancel_button, delete_button],
         )
         page.show_dialog(dialog)
 
@@ -3332,7 +3516,7 @@ import api_client
 import navigation
 import theme
 from components import feedback
-from components.service_icon import service_icon, status_label
+from components.service_icon import service_icon, status_label, status_badge
 from logic import ordering
 
 COLUMNS = 3
@@ -3384,24 +3568,37 @@ def _build_pages(page, subscriptions, size):
     return pages
 
 
+def _legend():
+    return ft.Container(key='home-fixed-legend', padding=ft.Padding.only(top=8),
+        content=ft.Column(spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Row(spacing=16, alignment=ft.MainAxisAlignment.CENTER, controls=[
+                ft.Row(spacing=4, controls=[status_badge('trial'), theme.text('トライアル中', size=11, color=theme.INK_SUB)]),
+                ft.Row(spacing=4, controls=[status_badge('cancelled'), theme.text('解約済み', size=11, color=theme.INK_SUB)])]),
+            theme.text('左右にスワイプして，次のページへ．', size=11, color=theme.INK_SUB)]))
+
+
+def _home_layout(controls):
+    return ft.Column(expand=True, spacing=0, controls=[
+        ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=18, controls=controls), _legend()])
+
+
 def home_view(page):
     try:
         subs = api_client.list_subscriptions()
     except api_client.ApiError as error:
-        return feedback.error_panel(page, str(error))
+        return _home_layout([feedback.error_panel(page, str(error))])
     counts = ordering.count_by_status(subs)
     state = {'order': ordering.ORDER_FREQUENCY, 'current': 0}
     size = min(72, max(52, int(((page.width or theme.BASE_WIDTH) - 48) / 3 - 30)))
     heading = ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-        ft.Column(spacing=3, expand=True, controls=[theme.text('マイサブスク', size=25, weight='bold'),
-            theme.text('契約と更新を，ひと目で確認．', size=12, color=theme.INK_SUB)]),
+        ft.Column(spacing=3, expand=True, controls=[theme.text('マイサブスク', size=25, weight='bold')]),
         ft.IconButton(icon=ft.Icons.ADD_ROUNDED, bgcolor=theme.ACCENT, icon_color=theme.ON_ACCENT,
             width=46, height=46, tooltip='サブスクを追加',
             on_click=lambda e: navigation.go(page, navigation.REGISTER))])
     stats = ft.Row(spacing=8, controls=[_stat('契約中', counts['active'], theme.ACCENT),
         _stat('トライアル', counts['trial'], theme.TRIAL), _stat('解約済み', counts['cancelled'], theme.OFF_INK)])
     if not subs:
-        return ft.Column(scroll=ft.ScrollMode.AUTO, spacing=18, controls=[heading, stats,
+        return _home_layout([heading, stats,
             feedback.message_panel('最初のサブスクを登録しましょう．\n契約内容をまとめて確認できます．',
                 button_label='サブスクを追加', on_click=lambda e: navigation.go(page, navigation.REGISTER))])
     count = math.ceil(len(subs) / PER_PAGE)
@@ -3444,13 +3641,11 @@ def home_view(page):
         options=[ft.DropdownOption(key=key, text=value) for key, value in ordering.ORDER_LABELS.items()],
         on_select=order_changed)
     refresh_position()
-    return ft.Column(spacing=18, scroll=ft.ScrollMode.AUTO, controls=[heading, stats,
+    return _home_layout([heading, stats,
         ft.Row(controls=[sort, ft.Container(padding=8, content=theme.text(f'{len(subs)}件', size=13, color=theme.INK_SUB))]),
         pager, ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, visible=count > 1,
             controls=[previous, ft.Column(spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[dots, position]), following]),
-        theme.text('時計：トライアル中　✓：解約済み\n左右にスワイプして，次のページへ．',
-            size=11, color=theme.INK_SUB, text_align=ft.TextAlign.CENTER)])
+                controls=[dots, position]), following])])
 ```
 
 ## src/views/register.py
@@ -3466,6 +3661,7 @@ import navigation
 from api_client import ApiError
 from logic.api_bridge import call_api
 from components.service_icon import service_icon
+from components.datetime_input import attach_datetime_picker
 from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
@@ -3500,6 +3696,9 @@ def register_view(page, api=None, on_saved=None, on_back=None):
                                     min_lines=2, max_lines=4, max_length=1000,
                                     helper="例：メールアドレスとパスワードの準備が必要．パスワード自体は入力しないでください．"),
     }
+
+    attach_datetime_picker(page, fields["joined_at"])
+    attach_datetime_picker(page, fields["trial_ends_at"], minimum=lambda: fields["joined_at"].value)
 
     def status_changed(event):
         """無料トライアルを選択したときだけ終了日時を表示する．"""
@@ -4397,6 +4596,170 @@ def test_deadline_sort_handles_unknown_dates_and_cancelled():
 @pytest.mark.parametrize("url", ["https://example.com", "http://example.com/path", ""])
 def test_valid_url(url):
     assert valid_url(url)
+```
+
+## tests/test_ui_finish.py
+
+```python
+"""日時の確定・キャンセルと，タブ遷移中の操作を確認する．"""
+import asyncio
+from datetime import datetime, time
+from types import SimpleNamespace
+
+import flet as ft
+import pytest
+
+import api_client
+import navigation
+import main as app
+from components.datetime_input import attach_datetime_picker
+from components.tab_slider import TabSlider
+from views.home import home_view
+from views.deadline import deadline_view
+from views.register import register_view
+from ui_helpers import walk
+
+
+class Store(dict):
+    def set(self, key, value):
+        self[key] = value
+
+
+class PageStub:
+    width = 390
+    window = None
+    route = '/'
+    def __init__(self):
+        self.dialogs = []
+        self.tasks = []
+        self.views = []
+        self.session = SimpleNamespace(store=Store())
+    def update(self):
+        pass
+    def show_dialog(self, dialog):
+        self.dialogs.append(dialog)
+    def run_task(self, handler, *args):
+        self.tasks.append((handler, args))
+
+
+def test_legend_is_outside_scroll_and_uses_same_status_icons():
+    view = home_view(PageStub())
+    body, legend = view.controls
+    assert body.expand and body.scroll == ft.ScrollMode.AUTO
+    assert legend.key == 'home-fixed-legend' and legend not in list(walk(body))
+    icons = [c.icon for c in walk(legend) if isinstance(c, ft.Icon)]
+    assert icons == [ft.Icons.ACCESS_TIME, ft.Icons.CHECK]
+    texts = [c.value for c in walk(view) if isinstance(c, ft.Text)]
+    assert not any('ひと目で確認' in text or '✓' in text or '時計：' in text for text in texts)
+    assert not any('解約の検討やチャージ' in c.value for c in walk(deadline_view(PageStub())) if isinstance(c, ft.Text))
+
+
+def test_empty_home_also_keeps_legend_at_bottom(monkeypatch):
+    monkeypatch.setattr(api_client, '_dummy_subs', [])
+    assert home_view(PageStub()).controls[-1].key == 'home-fixed-legend'
+
+
+@pytest.mark.parametrize('label', ['入会日時 *', 'トライアル終了日時 *'])
+def test_registration_date_and_time_are_committed_together(label):
+    page = PageStub()
+    view = register_view(page)
+    field = next(c for c in walk(view) if isinstance(c, ft.TextField) and c.label == label)
+    assert field.read_only and field.suffix_icon.width >= 44
+    before = field.value
+    field.on_click(None)
+    date_picker = page.dialogs[-1]
+    assert isinstance(date_picker, ft.DatePicker)
+    assert date_picker.locale.language_code == 'ja'
+    # 日付だけ確定した段階や，時刻選択をキャンセルした段階では入力値を変えない．
+    date_picker.value = datetime(2026, 11, 6)
+    date_picker.on_change(SimpleNamespace(control=date_picker))
+    clock = page.dialogs[-1]
+    assert isinstance(clock, ft.TimePicker) and clock.hour_format == ft.TimePickerHourFormat.H24
+    assert field.value == before
+    clock.value = time(16, 45)
+    clock.on_change(SimpleNamespace(control=clock))
+    assert field.value == '2026-11-06T16:45'
+
+
+def test_trial_calendar_cannot_choose_day_before_join_and_ignores_disabled_field():
+    page = PageStub()
+    field = ft.TextField(label='終了日時', value='')
+    attach_datetime_picker(page, field, minimum=lambda: '2026-11-01T18:20')
+    field.on_click(None)
+    picker = page.dialogs[-1]
+    assert picker.first_date == datetime(2026, 11, 1).date()
+    assert picker.value >= datetime(2026, 11, 1, 18, 20)
+    field.disabled = True
+    field.on_click(None)
+    assert len(page.dialogs) == 1
+
+
+def test_tab_slides_in_both_directions_and_discards_old_tasks():
+    async def scenario():
+        page = PageStub()
+        slider = TabSlider(page, navigation.HOME, ft.Text('home'))
+        slider.show(navigation.BREAKDOWN, ft.Text('breakdown'))
+        assert slider.root.controls[-1].offset.x == 1
+        slider.show(navigation.HOME, ft.Text('latest home'))
+        assert slider.root.controls[-1].offset.x == -1
+        # 前の遷移が後から終了しても，最新の画面を消さない．
+        await asyncio.gather(*(handler(*args) for handler, args in page.tasks))
+        assert len(slider.root.controls) == 1
+        assert slider.root.controls[0].content.value == 'latest home'
+        assert slider.root.controls[0].offset.x == 0
+    asyncio.run(scenario())
+
+
+def test_route_changes_reuse_tab_view_and_return_from_registration(monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
+        for route in navigation.TAB_ROUTES:
+            monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
+        page = PageStub()
+        app.main(page)
+        handler, args = page.tasks.pop(0)
+        await handler(*args)
+        original = page.views[0]
+        for route in [navigation.BREAKDOWN, navigation.DEADLINE, navigation.HOME]:
+            page.route = route
+            await page.on_route_change(SimpleNamespace(route=route))
+            assert page.views[0] is original and original.route == route
+            assert navigation.last_tab(page) == route
+        page.route = navigation.REGISTER
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        assert len(page.views) == 2
+        page.route = navigation.HOME
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        assert len(page.views) == 1 and page.views[0] is not original
+    asyncio.run(scenario())
+
+
+def test_slow_screen_does_not_replace_a_newer_route(monkeypatch):
+    import threading
+    async def scenario():
+        monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
+        started, release = threading.Event(), threading.Event()
+        def slow_screen(page):
+            started.set()
+            release.wait(timeout=3)
+            return ft.Text('old slow screen')
+        for route in navigation.TAB_ROUTES:
+            monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
+        monkeypatch.setitem(app.SCREENS, navigation.BREAKDOWN, app.Screen(slow_screen))
+        page = PageStub()
+        app.main(page)
+        handler, args = page.tasks.pop(0)
+        await handler(*args)
+        page.route = navigation.BREAKDOWN
+        pending = asyncio.create_task(page.on_route_change(SimpleNamespace(route=page.route)))
+        assert await asyncio.to_thread(started.wait, 1)
+        page.route = navigation.DEADLINE
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        release.set()
+        await pending
+        stack = next(c for c in walk(page.views[0]) if isinstance(c, ft.Stack))
+        assert stack.controls[-1].content.value == navigation.DEADLINE
+    asyncio.run(scenario())
 ```
 
 ## tests/test_ui_workflow.py

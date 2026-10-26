@@ -83,7 +83,6 @@ def deadline_view(page: ft.Page) -> ft.Control:
         spacing=16,
         controls=[
             theme.text("支払期日が近いサブスク", size=22, weight="bold"),
-            theme.text("解約の検討やチャージ確認にお役立てください。", size=13, color=theme.INK_SUB),
             ft.Column(spacing=10, controls=cards),
         ],
     )

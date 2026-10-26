@@ -39,13 +39,18 @@ def service_icon(sub, size=72, color_index=None, ring_color=theme.GROUND):
         content=image, tooltip=name)
     controls = [tile]
     if trial or cancelled:
-        controls.append(ft.Container(width=BADGE_SIZE, height=BADGE_SIZE, right=0, bottom=0,
-            bgcolor=theme.OFF_INK if cancelled else theme.TRIAL,
-            border_radius=12, border=ft.Border.all(2, ring_color), alignment=ft.Alignment.CENTER,
-            content=ft.Icon(ft.Icons.CHECK if cancelled else ft.Icons.ACCESS_TIME,
-                            size=13, color=theme.ON_ACCENT)))
+        controls.append(status_badge(sub['status'], ring_color, right=0, bottom=0))
     width, height = footprint(size)
     return ft.Stack(width=width, height=height, controls=controls)
+
+
+def status_badge(status, ring_color=theme.GROUND, **position):
+    """カードと凡例で同じ時計・チェックと配色を使う．"""
+    return ft.Container(width=BADGE_SIZE, height=BADGE_SIZE,
+        bgcolor=theme.OFF_INK if status == 'cancelled' else theme.TRIAL,
+        border_radius=12, border=ft.Border.all(2, ring_color), alignment=ft.Alignment.CENTER,
+        content=ft.Icon(ft.Icons.CHECK if status == 'cancelled' else ft.Icons.ACCESS_TIME,
+                        size=13, color=theme.ON_ACCENT), **position)
 
 
 def status_label(sub):

@@ -5,7 +5,7 @@ import api_client
 import navigation
 import theme
 from components import feedback
-from components.service_icon import service_icon, status_label
+from components.service_icon import service_icon, status_label, status_badge
 from logic import notifications, ordering
 
 COLUMNS = 3
@@ -78,18 +78,31 @@ def _build_pages(page, subscriptions, size):
     return pages
 
 
+def _legend():
+    return ft.Container(key='home-fixed-legend', padding=ft.Padding.only(top=8),
+        content=ft.Column(spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Row(spacing=16, alignment=ft.MainAxisAlignment.CENTER, controls=[
+                ft.Row(spacing=4, controls=[status_badge('trial'), theme.text('トライアル中', size=11, color=theme.INK_SUB)]),
+                ft.Row(spacing=4, controls=[status_badge('cancelled'), theme.text('解約済み', size=11, color=theme.INK_SUB)])]),
+            theme.text('左右にスワイプして，次のページへ．', size=11, color=theme.INK_SUB)]))
+
+
+def _home_layout(controls):
+    return ft.Column(expand=True, spacing=0, controls=[
+        ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=18, controls=controls), _legend()])
+
+
 def home_view(page):
     try:
         subs = api_client.list_subscriptions()
     except api_client.ApiError as error:
-        return feedback.error_panel(page, str(error))
+        return _home_layout([feedback.error_panel(page, str(error))])
     counts = ordering.count_by_status(subs)
     state = {'order': ordering.ORDER_FREQUENCY, 'current': 0, 'filter': None, 'pages': 0}
     _show_notice_once(page, subs)
     size = min(72, max(52, int(((page.width or theme.BASE_WIDTH) - 48) / 3 - 30)))
     heading = ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
-        ft.Column(spacing=3, expand=True, controls=[theme.text('マイサブスク', size=25, weight='bold'),
-            theme.text('契約と更新を，ひと目で確認．', size=12, color=theme.INK_SUB)]),
+        ft.Column(spacing=3, expand=True, controls=[theme.text('マイサブスク', size=25, weight='bold')]),
         ft.IconButton(icon=ft.Icons.ADD_ROUNDED, bgcolor=theme.ACCENT, icon_color=theme.ON_ACCENT,
             width=46, height=46, tooltip='サブスクを追加',
             on_click=lambda e: navigation.go(page, navigation.REGISTER))])
@@ -97,7 +110,7 @@ def home_view(page):
     stats = ft.Row(spacing=8)
     if not subs:
         stats.controls = [_stat(STATUS_LABELS[key], counts[key], color) for key, color in stat_colors.items()]
-        return ft.Column(scroll=ft.ScrollMode.AUTO, spacing=18, controls=[heading, stats,
+        return _home_layout([heading, stats,
             feedback.message_panel('最初のサブスクを登録しましょう．\n契約内容をまとめて確認できます．',
                 button_label='サブスクを追加', on_click=lambda e: navigation.go(page, navigation.REGISTER))])
     pager = ft.PageView()
@@ -167,8 +180,6 @@ def home_view(page):
         options=[ft.DropdownOption(key=key, text=value) for key, value in ordering.ORDER_LABELS.items()],
         on_select=order_changed)
     rebuild()
-    return ft.Column(spacing=18, scroll=ft.ScrollMode.AUTO, controls=[heading, stats,
+    return _home_layout([heading, stats,
         ft.Row(controls=[sort, ft.Container(padding=8, content=total)]),
-        filter_row, pager, empty, navigator,
-        theme.text('時計：トライアル中　✓：解約済み\n左右にスワイプして，次のページへ．',
-            size=11, color=theme.INK_SUB, text_align=ft.TextAlign.CENTER)])
+        filter_row, pager, empty, navigator])
