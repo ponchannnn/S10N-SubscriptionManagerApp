@@ -46,10 +46,14 @@ def go_back(page: ft.Page) -> None:
 
 
 def reload(page: ft.Page) -> None:
-    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。"""
+    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。
+
+    main.py の show_route は非同期(通信中はローディング表示を出す)なので、
+    ここで直接呼ばず page.run_task に渡して実行する。
+    """
     handler = page.session.store.get(_RELOAD_KEY)
     if handler:
-        handler()
+        page.run_task(handler)
 
 
 def get_sub_id(page: ft.Page) -> str | None:

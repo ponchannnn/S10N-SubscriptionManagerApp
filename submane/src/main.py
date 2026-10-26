@@ -7,6 +7,7 @@
 ヘッダーと下部タブはここで全画面に付けるので、各画面は中身だけを返せばよい。
 """
 
+import asyncio
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,11 @@ def _resolve(route: str) -> Screen | None:
     return SCREENS.get(route)
 
 
+def _loading() -> ft.Control:
+    """データ取得中に出す、画面いっぱいのローディング表示。"""
+    return ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=ft.ProgressRing())
+
+
 def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Control | None) -> ft.View:
     """ヘッダー + 中身 + 下部タブ を1つの画面(View)にまとめる。"""
     controls = [header, ft.Container(content=content, expand=True, padding=ft.Padding.symmetric(horizontal=theme.GUTTER, vertical=16))]
@@ -96,22 +102,34 @@ def main(page: ft.Page) -> None:
         window.width = theme.BASE_WIDTH
         window.height = theme.BASE_HEIGHT
 
-    def build_content(screen: Screen) -> ft.Control:
-        """画面の中身を作る。画面側で想定外のエラーが起きてもアプリ全体は止めない。"""
+    async def build_content(screen: Screen) -> ft.Control:
+        """画面の中身を作る。画面側で想定外のエラーが起きてもアプリ全体は止めない。
+
+        screen.view(page) は api_client(同期・通信あり)を呼ぶことがあるので、
+        別スレッドで実行してアプリが固まって見えないようにする。
+        """
         try:
-            return screen.view(page)
+            return await asyncio.to_thread(screen.view, page)
         except Exception:  # noqa: BLE001 開発中に原因を追えるよう、内容はコンソールに出す
             traceback.print_exc()
             return feedback.error_panel(page, "画面の表示中にエラーが起きました。")
 
-    def show_route(e=None) -> None:
-        """今のルートに合わせて画面を組み立てる。"""
+    _route_version = {"n": 0}
+
+    async def show_route(e=None) -> None:
+        """今のルートに合わせて画面を組み立てる。
+
+        通信が終わるまでローディング表示を出し、終わったら本物の中身に差し替える。
+        待っている間に別の画面へ移られたら、古い結果は捨てる(route_versionで判定)。
+        """
         route = getattr(e, "route", None) or page.route or navigation.HOME
         screen = _resolve(route)
         if screen is None:
             navigation.go(page, navigation.HOME)
             return
 
+        _route_version["n"] += 1
+        version = _route_version["n"]
         page.views.clear()
 
         # 未ログインなら会員登録・ログイン画面だけを出す
@@ -120,19 +138,38 @@ def main(page: ft.Page) -> None:
                 navigation.go(page, navigation.ACCOUNT)
                 return
             header = app_header(page, show_actions=False)
-            page.views.append(_shell(route, header, build_content(screen), footer=None))
+            page.views.append(_shell(route, header, _loading(), footer=None))
+            page.update()
+            content = await build_content(screen)
+            if version != _route_version["n"]:
+                return
+            page.views.pop()
+            page.views.append(_shell(route, header, content, footer=None))
             page.update()
             return
 
         if route in navigation.TAB_ROUTES:
             navigation.remember_tab(page, route)
-            page.views.append(_shell(route, app_header(page), build_content(screen), tab_bar(page, route)))
+            header, footer = app_header(page), tab_bar(page, route)
+            page.views.append(_shell(route, header, _loading(), footer))
+            page.update()
+            content = await build_content(screen)
+            if version != _route_version["n"]:
+                return
+            page.views.pop()
+            page.views.append(_shell(route, header, content, footer))
         else:
             # タブ画面の上に重ねる。端末の「戻る」で元のタブ画面に戻れる
             base = navigation.last_tab(page)
             page.views.append(_shell(base, app_header(page), ft.Container(), tab_bar(page, base)))
             header = app_header(page, title=screen.title, show_back=True, show_actions=False)
-            page.views.append(_shell(route, header, build_content(screen), tab_bar(page, None)))
+            page.views.append(_shell(route, header, _loading(), tab_bar(page, None)))
+            page.update()
+            content = await build_content(screen)
+            if version != _route_version["n"]:
+                return
+            page.views.pop()
+            page.views.append(_shell(route, header, content, tab_bar(page, None)))
         page.update()
 
     def on_view_pop(e) -> None:
@@ -142,7 +179,7 @@ def main(page: ft.Page) -> None:
     navigation.set_reload_handler(page, show_route)
     page.on_route_change = show_route
     page.on_view_pop = on_view_pop
-    show_route()
+    page.run_task(show_route)
 
 
 if __name__ == "__main__":
