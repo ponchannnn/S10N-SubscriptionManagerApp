@@ -3352,6 +3352,10 @@ def _tile(page, sub, size=64):
     state = status_label(sub)
     return ft.Container(expand=1, padding=ft.Padding.symmetric(vertical=10, horizontal=3),
         border_radius=16, bgcolor=theme.SURFACE, border=ft.Border.all(1, theme.LINE),
+        # 解約済みは画像・文字・バッジを含むカード全体を無彩色にして薄くする．
+        color_filter=ft.ColorFilter(color=ft.Colors.WHITE, blend_mode=ft.BlendMode.SATURATION)
+            if cancelled else None,
+        opacity=0.5 if cancelled else 1.0,
         on_click=lambda e: navigation.go_detail(page, sub['id']),
         content=ft.Semantics(button=True, label=f"{sub['name']} {state} 詳細を開く",
             content=ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
