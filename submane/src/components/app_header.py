@@ -1,7 +1,20 @@
 """画面幅を取りすぎない共通ヘッダー．追加操作はホームの主操作にまとめる．"""
 import flet as ft
+import api_client
 import navigation
 import theme
+from logic.notifications import upcoming_notices
+
+
+def _bell(page):
+    """お知らせのベル．近いお知らせがあれば件数のバッジを付ける(通信はしない)．"""
+    count = len(upcoming_notices(api_client.cached_subscriptions()))
+    return ft.IconButton(
+        icon=ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED if count else ft.Icons.NOTIFICATIONS_NONE_ROUNDED,
+        icon_color=theme.INK, width=44, height=44, bgcolor=theme.SURFACE,
+        tooltip=f'お知らせ {count}件' if count else 'お知らせ',
+        badge=ft.Badge(label=str(count), bgcolor=theme.DANGER, text_color=theme.ON_ACCENT) if count else None,
+        on_click=lambda e: navigation.go(page, navigation.NOTIFICATIONS))
 
 
 def app_header(page, title=None, show_back=False, show_actions=True):
@@ -17,6 +30,7 @@ def app_header(page, title=None, show_back=False, show_actions=True):
     controls.append(theme.text(title or 'サブマネ', size=18 if title else 21, weight='bold',
         expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
     if show_actions:
+        controls.append(_bell(page))
         controls.append(ft.IconButton(icon=ft.Icons.PERSON_OUTLINE_ROUNDED, icon_color=theme.INK,
             width=44, height=44, tooltip='アカウント', bgcolor=theme.SURFACE,
             on_click=lambda e: navigation.go(page, navigation.ACCOUNT)))

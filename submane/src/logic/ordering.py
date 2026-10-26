@@ -20,8 +20,16 @@ def sort_subscriptions(subs: list[dict], order: str = ORDER_FREQUENCY) -> list[d
     return sort_registered(subs, order)
 
 
+STATUSES = ("active", "trial", "cancelled")
+
+
 def count_by_status(subs: list[dict]) -> dict:
-    """件数を数える。active は「契約中(トライアル中を含む)」。"""
-    cancelled = sum(1 for sub in subs if sub.get("status") == "cancelled")
-    trial = sum(1 for sub in subs if sub.get("status") == "trial")
-    return {"active": len(subs) - cancelled, "trial": trial, "cancelled": cancelled}
+    """状態ごとの件数を数える。active は「有料で契約中」で、トライアル中は含めない。"""
+    return {status: sum(1 for sub in subs if sub.get("status") == status) for status in STATUSES}
+
+
+def filter_by_status(subs: list[dict], status: str | None) -> list[dict]:
+    """指定した状態のものだけを新しいリストで返す。status が None なら全件。"""
+    if status is None:
+        return list(subs)
+    return [sub for sub in subs if sub.get("status") == status]

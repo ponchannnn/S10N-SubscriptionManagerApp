@@ -273,6 +273,13 @@ def list_subscriptions() -> list[dict]:
     return items
 
 
+def cached_subscriptions() -> list[dict]:
+    """通信せずに，手元にある一覧(ダミーデータか前回取得分)を返す。ヘッダーのベルの件数用。"""
+    if config.USE_DUMMY_DATA:
+        return copy.deepcopy(_dummy_subs)
+    return local_db.load_subscriptions()
+
+
 def get_subscription(sub_id) -> dict:
     """サブスクを1件返す。通信できなければ前回取得した内容を返す。"""
     if config.USE_DUMMY_DATA:

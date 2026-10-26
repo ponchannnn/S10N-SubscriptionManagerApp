@@ -53,7 +53,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
                                   helper="8文字以上")
     title = theme.text("ログイン", size=26, weight="bold")
     toggle_button = ft.TextButton("はじめての方はこちら(新規登録)")
-    submit_button = feedback.primary_button("ログイン", on_click=lambda e: submit(e))
+    submit_button = feedback.primary_button("ログイン", on_click=None)
 
     def apply_mode():
         """今のモード(login/signup)に合わせて文言を変える。"""
@@ -111,8 +111,12 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
             toggle_button.disabled = False
             page.update()
 
+    # async 関数は lambda で包むと await されないので、そのまま渡す
+    submit_button.on_click = submit
+
     return ft.Column(
         spacing=16,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         controls=[
             title,
             theme.text("サブマネを使うには会員登録またはログインしてください．", color=theme.INK_SUB),

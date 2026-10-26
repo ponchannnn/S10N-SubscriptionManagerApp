@@ -92,3 +92,30 @@ def test_common_api_preserves_server_field_errors(monkeypatch):
             api_client._request('POST', '/api/v1/subscriptions', json={})
     assert info.value.status_code == 422
     assert info.value.details == payload['error']['details']
+
+
+def _tile_labels(view):
+    pager = next(c for c in walk(view) if isinstance(c, ft.PageView))
+    return [tile.content.label for screen in pager.controls for row in screen.controls
+            for tile in row.controls if tile.content]
+
+
+def test_home_stat_cards_filter_by_status_and_toggle_off(monkeypatch):
+    monkeypatch.setattr(config, 'USE_DUMMY_DATA', True)
+    view = home_view(PageStub())
+    every = len(_tile_labels(view))
+    cards = {c.content.label.split()[0]: c for c in walk(view)
+             if isinstance(c, ft.Container) and isinstance(c.content, ft.Semantics)
+             and '絞り込む' in (c.content.label or '')}
+    assert set(cards) == {'契約中', 'トライアル', '解約済み'}
+
+    cards['トライアル'].on_click(None)
+    trial = _tile_labels(view)
+    assert trial and all('トライアル' in label for label in trial)
+
+    cards = {c.content.label.split()[0]: c for c in walk(view)
+             if isinstance(c, ft.Container) and isinstance(c.content, ft.Semantics)
+             and '絞り込む' in (c.content.label or '')}
+    assert cards['トライアル'].content.selected
+    cards['トライアル'].on_click(None)
+    assert len(_tile_labels(view)) == every

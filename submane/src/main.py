@@ -28,6 +28,7 @@ from views.breakdown import breakdown_view
 from views.deadline import deadline_view
 from views.detail import detail_view
 from views.home import home_view
+from views.notifications import notifications_view
 from views.register import register_view
 
 
@@ -46,6 +47,7 @@ SCREENS = {
     navigation.DEADLINE: Screen(deadline_view),
     navigation.REGISTER: Screen(register_view, title="サブスクを追加"),
     navigation.ACCOUNT: Screen(account_view, title="アカウント"),
+    navigation.NOTIFICATIONS: Screen(notifications_view, title="お知らせ"),
 }
 DETAIL_SCREEN = Screen(detail_view, title="サブスクの詳細")
 
@@ -111,13 +113,13 @@ def main(page: ft.Page) -> None:
             traceback.print_exc()
             return feedback.error_panel(page, "画面の表示中にエラーが起きました．")
 
-    tab_state = {"view": None, "slider": None, "footer": None}
+    tab_state = {"view": None, "slider": None, "footer": None, "header": None}
     route_version = 0
 
     def clear_tab_state():
         if tab_state["slider"]:
             tab_state["slider"].cancel()
-        tab_state.update(view=None, slider=None, footer=None)
+        tab_state.update(view=None, slider=None, footer=None, header=None)
 
     async def show_route(e=None) -> None:
         """Viewを維持してスライドし，古い通信結果は反映しない．"""
@@ -148,9 +150,10 @@ def main(page: ft.Page) -> None:
                 clear_tab_state()
                 page.views.clear()
                 slider = TabSlider(page, route, _loading())
+                header = ft.Container(content=app_header(page))
                 footer = ft.Container(content=tab_bar(page, route))
-                view = _shell(route, app_header(page), slider.root, footer)
-                tab_state.update(view=view, slider=slider, footer=footer)
+                view = _shell(route, header, slider.root, footer)
+                tab_state.update(view=view, slider=slider, footer=footer, header=header)
                 page.views.append(view)
                 target = slider.root.controls[0]
         else:
@@ -167,6 +170,9 @@ def main(page: ft.Page) -> None:
         if version != route_version:
             return
         target.content = content
+        if route in navigation.TAB_ROUTES and tab_state["header"] is not None:
+            # 読み込んだ最新の一覧でベルの件数を数え直すため，ヘッダーを作り直す
+            tab_state["header"].content = app_header(page)
         page.update()
 
     def on_view_pop(e) -> None:
