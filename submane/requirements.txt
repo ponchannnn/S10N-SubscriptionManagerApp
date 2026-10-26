@@ -12,3 +12,6 @@ flet-cli==1.0.4
 flet-desktop==1.0.4
 flet-web==1.0.4
 pytest==9.1.1
+
+# Flet WebのFastAPIラッパーと互換性のある検証済みバージョン
+fastapi==0.142.2

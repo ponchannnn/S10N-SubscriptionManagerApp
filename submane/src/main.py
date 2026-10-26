@@ -10,6 +10,7 @@
 import asyncio
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import flet as ft
@@ -62,7 +63,7 @@ def _loading() -> ft.Control:
 
 def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Control | None) -> ft.View:
     """ヘッダー + 中身 + 下部タブ を1つの画面(View)にまとめる。"""
-    controls = [header, ft.Container(content=content, expand=True)]
+    controls = [header, ft.Container(content=content, expand=True, padding=ft.Padding.symmetric(horizontal=theme.GUTTER, vertical=16))]
     if footer:
         controls.append(footer)
     return ft.View(
@@ -182,4 +183,4 @@ def main(page: ft.Page) -> None:
 
 
 if __name__ == "__main__":
-    ft.run(main, assets_dir="assets")
+    ft.run(main, assets_dir=str(Path(__file__).parent / "assets"))

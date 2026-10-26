@@ -62,7 +62,7 @@
   name: Amazonプライム
   name_kana: アマゾンプライム
   category: shopping
-  icon_path: /icons/amazon-prime.png
+  icon_path: /icons/amazon-prime.svg
   color: "#00A8E1"
   join_url: https://example.com/amazon-prime/join
   cancel_url: https://example.com/amazon-prime/cancel
@@ -140,7 +140,7 @@
   name: Adobe CC
   name_kana: アドビシーシー
   category: tool
-  icon_path: /icons/adobe-cc.png
+  icon_path: /icons/adobe-cc.svg
   color: "#DA1F26"
   join_url: https://example.com/adobe-cc/join
   cancel_url: https://example.com/adobe-cc/cancel
@@ -206,7 +206,7 @@
   name: iCloud+
   name_kana: アイクラウドプラス
   category: cloud
-  icon_path: /icons/icloud-plus.png
+  icon_path: /icons/icloud-plus.svg
   color: "#3693F3"
   join_url: https://example.com/icloud-plus/join
   cancel_url: https://example.com/icloud-plus/cancel

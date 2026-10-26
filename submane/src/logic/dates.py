@@ -69,6 +69,9 @@ def next_payment_at(sub: dict, now: datetime | None = None) -> datetime | None:
     """現在より後で最も近い支払日を返す。解約済みは None。"""
     if sub.get("status") == "cancelled":
         return None
+    if sub.get("next_payment_at"):
+        from logic.subscriptions import JST, parse_time
+        return parse_time(sub["next_payment_at"]).astimezone(JST).replace(tzinfo=None)
     anchor = payment_anchor(sub)
     if anchor is None:
         return None

@@ -16,6 +16,7 @@ dev = [
     "flet-cli==1.0.4",
     "flet-desktop==1.0.4",
     "flet-web==1.0.4",
+    "fastapi==0.142.2",  # Flet Webで検証した互換バージョン
     "pytest",
 ]
 

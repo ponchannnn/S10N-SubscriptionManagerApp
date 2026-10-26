@@ -16,7 +16,8 @@ def sort_subscriptions(subs: list[dict], order: str = ORDER_FREQUENCY) -> list[d
         rank = _CYCLE_RANK.get(sub.get("cycle"), 9) if order == ORDER_FREQUENCY else 0
         return (cancelled, rank, index)
 
-    return [sub for _, sub in sorted(enumerate(subs), key=key)]
+    from logic.subscriptions import sort_subscriptions as sort_registered
+    return sort_registered(subs, order)
 
 
 def count_by_status(subs: list[dict]) -> dict:

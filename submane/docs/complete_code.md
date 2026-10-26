@@ -1,1111 +1,535 @@
-# 石井担当・全コード
-
-各ファイルのコードを省略せず掲載しています．
-
-## pyproject.toml
-
-```toml
-[project]
-name = "submane-ishii"
-version = "0.1.0"
-description = "サブマネ 石井担当機能"
-requires-python = ">=3.12"
-dependencies = ["flet[all]==1.0.3", "httpx==0.28.1"]
-
-[project.optional-dependencies]
-dev = ["pytest==9.1.1"]
-
-[tool.flet]
-org = "jp.ac.ibaraki.team.e1"
-product = "サブマネ"
-company = "Team E1"
-
-[tool.flet.app]
-path = "src"
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
-```
-
-## .gitignore
-
-```text
-.venv/
-__pycache__/
-.pytest_cache/
-build/
-data/
-.reference/
-*.log
-```
-
-## setup.ps1
-
-```powershell
-$ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath $PSScriptRoot
-py -3.12 -m venv .venv
-if ($LASTEXITCODE -ne 0) { throw 'Python 3.12をインストールするか，既存の.venvを利用してください．' }
-& "$PSScriptRoot/.venv/Scripts/python.exe" -m pip install 'flet[all]==1.0.3' 'httpx==0.28.1' 'pytest==9.1.1'
-if ($LASTEXITCODE -ne 0) { throw '依存ライブラリのインストールに失敗しました．' }
-```
-
-## run.ps1
-
-```powershell
-$ErrorActionPreference = 'Stop'
-Set-Location -LiteralPath $PSScriptRoot
-& "$PSScriptRoot/.venv/Scripts/python.exe" "$PSScriptRoot/src/main.py" @args
-```
-
-## src/api_client.py
-
-```python
-"""仮API契約を一か所にまとめ，ローカルJSON保存と切り替える．"""
-import asyncio
-import copy
-import json
-import os
-import tempfile
-from datetime import datetime
-from pathlib import Path
-from threading import RLock
-from uuid import uuid4
-from urllib.parse import quote
-import httpx
-import config
-from dummy_data import SERVICES
-from logic.subscriptions import normalize_keyword, validate_subscription
-
-
-class ApiError(RuntimeError):
-    """画面に表示できる保存・通信エラー．"""
-
-
-class ApiClient:
-    """asyncメソッドで画面を止めずに保存や通信を行う．"""
-
-    def __init__(self, data_file=None, use_dummy=None, base_url=None, http_session=None):
-        self.data_file = Path(data_file or config.DATA_FILE)
-        self.use_dummy = config.USE_DUMMY_DATA if use_dummy is None else use_dummy
-        self.base_url = config.API_BASE_URL if base_url is None else base_url
-        self._http_session = http_session
-        self._owns_session = http_session is None
-        self._lock = RLock()
-
-    def http_session(self):
-        """ログイン担当と共有するCookie保持用のHTTPセッションを返す．"""
-        if not self.base_url:
-            raise ApiError("APIのURLが未設定です．")
-        if self._http_session is None or self._http_session.is_closed:
-            self._http_session = httpx.AsyncClient(base_url=self.base_url + "/", timeout=15)
-            self._owns_session = True
-        return self._http_session
-
-    async def aclose(self):
-        """このクライアントが所有する通信セッションを終了する．"""
-        if self._owns_session and self._http_session is not None:
-            await self._http_session.aclose()
-
-    async def _request(self, method, path, **kwargs):
-        """APIエラーと不正なJSONを利用者向けのエラーに変換する．"""
-        if not self.base_url:
-            raise ApiError("APIのURLが未設定です．")
-        try:
-            response = await self.http_session().request(method, path, **kwargs)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as error:
-            message = "ログイン状態を確認してください．" if error.response.status_code in (401, 403) else "保存・取得に失敗しました．時間をおいて再試行してください．"
-            raise ApiError(message) from error
-        except (httpx.HTTPError, ValueError) as error:
-            raise ApiError("通信できませんでした．接続先とネットワークを確認してください．") from error
-
-    def _read(self):
-        """壊れたファイルを空データで上書きせず，エラーとして扱う．"""
-        if not self.data_file.exists():
-            return []
-        try:
-            values = json.loads(self.data_file.read_text(encoding="utf-8"))
-            if not isinstance(values, list) or any(not isinstance(value, dict) or "id" not in value for value in values):
-                raise ValueError("Invalid records")
-            return values
-        except (OSError, ValueError) as error:
-            raise ApiError("保存データを読み取れません．JSONファイルを確認してください．") from error
-
-    def _write(self, items):
-        """一時ファイルから置換し，途中で保存が失敗しても元データを残す．"""
-        temporary = None
-        try:
-            self.data_file.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.data_file.parent, delete=False) as output:
-                temporary = output.name
-                json.dump(items, output, ensure_ascii=False, indent=2)
-            os.replace(temporary, self.data_file)
-        except OSError as error:
-            raise ApiError("保存できません．フォルダの書き込み権限を確認してください．") from error
-        finally:
-            if temporary and os.path.exists(temporary):
-                os.unlink(temporary)
-
-    def _local(self, operation, sub_id=None, data=None):
-        """単一プロセス内の読み書きをロックして処理する．"""
-        with self._lock:
-            items = self._read()
-            if operation == "list":
-                return copy.deepcopy(items)
-            if operation == "create":
-                item = {**data, "id": uuid4().hex,
-                        "registered_at": datetime.now().astimezone().isoformat(), "next_payment_at": None}
-                items.append(item)
-            else:
-                item = next((value for value in items if value["id"] == sub_id), None)
-                if item is None:
-                    raise ApiError("このサブスクは見つかりません．一覧を更新してください．")
-                if operation == "get":
-                    return copy.deepcopy(item)
-                validated = validate_subscription({**item, **data})
-                item.update(validated)
-                for key in ("next_payment_at",):
-                    if key in data:
-                        item[key] = data[key]
-            self._write(items)
-            return copy.deepcopy(item)
-
-    async def search_services(self, keyword=""):
-        """定番サービスを検索する．ローカルの結果はコピーして返す．"""
-        if not self.use_dummy:
-            result = await self._request("GET", "services", params={"q": keyword})
-            if not isinstance(result, list):
-                raise ApiError("サービス検索の応答形式が想定と異なります．")
-            return result
-        query = normalize_keyword(keyword)
-        return copy.deepcopy([service for service in SERVICES if query in normalize_keyword(
-            " ".join([service["name"], *service["aliases"]]))])
-
-    async def list_subscriptions(self):
-        """登録済みの一覧を返す．"""
-        if self.use_dummy:
-            return await asyncio.to_thread(self._local, "list")
-        result = await self._request("GET", "subscriptions")
-        if not isinstance(result, list):
-            raise ApiError("一覧の応答形式が想定と異なります．")
-        return result
-
-    async def get_subscription(self, sub_id):
-        """一件のサブスクを返す．"""
-        if self.use_dummy:
-            return await asyncio.to_thread(self._local, "get", sub_id)
-        return await self._request("GET", "subscriptions/" + quote(str(sub_id), safe=""))
-
-    async def create_subscription(self, data):
-        """検証済みのサブスクを作成する．"""
-        data = validate_subscription(data)
-        if self.use_dummy:
-            return await asyncio.to_thread(self._local, "create", data=data)
-        return await self._request("POST", "subscriptions", json=data)
-
-    async def update_subscription(self, sub_id, data):
-        """登録済みサブスクを部分更新する．"""
-        if self.use_dummy:
-            return await asyncio.to_thread(self._local, "update", sub_id, data)
-        return await self._request("PATCH", "subscriptions/" + quote(str(sub_id), safe=""), json=data)
-```
-
-## src/components/__init__.py
-
-```python
-"""チームの画面で再利用する石井担当部品．"""
-```
-
-## src/components/service_icon.py
-
-```python
-"""無料トライアルと解約済みを一貫した見た目で表示する．"""
-import flet as ft
-import theme
-
-
-def service_icon(subscription, size=64, color_index=0):
-    """解約済みは画像を含めグレー表示，トライアル中は時計を添える．"""
-    cancelled = subscription.get("status") == "cancelled"
-    color = theme.OFF_FILL if cancelled else theme.TILE_COLORS[color_index % len(theme.TILE_COLORS)]
-    letter = ft.Text(subscription.get("name", "?")[:1], size=26,
-                     weight=ft.FontWeight.BOLD, color=theme.OFF_INK if cancelled else theme.SURFACE)
-    visual = letter
-    if subscription.get("icon"):
-        visual = ft.Image(src=subscription["icon"], width=size, height=size,
-                          fit=ft.BoxFit.COVER, border_radius=18, error_content=letter,
-                          color=theme.OFF_FILL if cancelled else None,
-                          color_blend_mode=ft.BlendMode.SATURATION if cancelled else None,
-                          opacity=0.5 if cancelled else 1)
-    tile = ft.Container(content=visual, width=size, height=size, bgcolor=color,
-                        border_radius=18, alignment=ft.Alignment.CENTER)
-    if subscription.get("status") != "trial":
-        return tile
-    return ft.Stack(width=size + 8, height=size + 8, controls=[
-        tile,
-        ft.Container(content=ft.Icon(ft.Icons.ACCESS_TIME, color=theme.SURFACE, size=16),
-                     width=26, height=26, right=0, top=0, bgcolor=theme.TRIAL,
-                     border_radius=13, alignment=ft.Alignment.CENTER),
-    ])
-```
-
-## src/components/sort_selector.py
-
-```python
-"""一覧画面へ組み込める並び順選択部品．"""
-import flet as ft
-from logic.subscriptions import SORT_LABELS
-
-
-def sort_selector(on_select, value="frequency", include_deadline=True):
-    """解約済みを末尾にするsort_subscriptionsと合わせて使用する．"""
-    return ft.Dropdown(label="並び順", value=value, on_select=on_select,
-                       options=[ft.DropdownOption(key=key, text=text)
-                                for key, text in SORT_LABELS.items()
-                                if include_deadline or key != "deadline"])
-```
-
-## src/components/status_actions.py
-
-```python
-"""詳細画面に組み込む解約・再契約の状態変更部品．"""
-from datetime import datetime
-import inspect
-import flet as ft
-import theme
-from api_client import ApiError
-from logic.subscriptions import ValidationError, cancellation_patch, reactivation_patch, valid_url
-
-
-def status_actions(page, subscription, api, on_changed):
-    """公式サイトを開く操作と，手続き後の記録を別の操作として提供する．"""
-    cancelled = subscription.get("status") == "cancelled"
-    url = subscription.get("join_url" if cancelled else "cancel_url", "")
-    label = "入会サイトを開く" if cancelled else "退会サイトを開く"
-    error_text = ft.Text("", color=theme.ERROR)
-    new_joined = ft.TextField(label="再契約の入会日時（日本時間）",
-                             value=datetime.now().strftime("%Y-%m-%dT%H:%M"),
-                             visible=cancelled)
-    confirm = ft.Checkbox(label="公式サイトで手続きを完了しました", value=False)
-    busy = {"value": False}
-
-    async def change_status(event):
-        """手続き完了確認後に保存し，成功した場合だけ一覧を更新する．"""
-        if busy["value"]:
-            return
-        if not confirm.value:
-            error_text.value = "公式サイトでの手続き完了を確認してください．"
-            page.update()
-            return
-        try:
-            patch = reactivation_patch(subscription, new_joined.value) if cancelled else cancellation_patch()
-        except ValidationError as error:
-            new_joined.error = error.errors.get("joined_at")
-            page.update()
-            return
-        busy["value"] = True
-        save.disabled = True
-        new_joined.disabled = True
-        confirm.disabled = True
-        error_text.value = ""
-        page.update()
-        try:
-            item = await api.update_subscription(subscription["id"], patch)
-        except ApiError as error:
-            error_text.value = str(error)
-        else:
-            result = on_changed(item)
-            if inspect.isawaitable(result):
-                await result
-        finally:
-            busy["value"] = False
-            save.disabled = False
-            new_joined.disabled = False
-            confirm.disabled = False
-            page.update()
-
-    save = ft.Button("再契約済みとして記録" if cancelled else "解約済みとして記録",
-                     bgcolor=theme.ACCENT, color=theme.SURFACE, height=48, on_click=change_status)
-    return ft.Column(spacing=12, controls=[
-        ft.Text("再契約する" if cancelled else "解約する", size=20, weight=ft.FontWeight.BOLD),
-        ft.Text("公式サイトで手続きを済ませた後，契約状態を更新してください．", color=theme.INK_SUB),
-        ft.Button(label, url=url if url and valid_url(url) else None,
-                  disabled=not bool(url and valid_url(url)), height=44, icon=ft.Icons.OPEN_IN_NEW),
-        ft.Text("URLが未登録です．公式サイトで手続きしてください．", visible=not bool(url), color=theme.INK_SUB),
-        new_joined, confirm, error_text, save,
-    ])
-```
-
-## src/config.py
-
-```python
-"""実API接続を行う際の設定．URLは環境変数で指定する．"""
-import os
-from pathlib import Path
-
-USE_DUMMY_DATA = os.getenv("SUBMANE_USE_DUMMY_DATA", "true").lower() == "true"
-API_BASE_URL = os.getenv("SUBMANE_API_BASE_URL", "").rstrip("/")
-DATA_FILE = Path(os.getenv(
-    "SUBMANE_DATA_FILE",
-    str(Path(os.getenv("FLET_APP_STORAGE_DATA", str(Path(__file__).resolve().parents[1] / "data")))
-        / "subscriptions.json"),
-))
-```
-
-## src/dummy_data.py
-
-```python
-"""定番サービスの仮マスタ．料金とURLは実サービスの現行情報ではない．"""
-SERVICES = [
-    {"id": "video-demo", "name": "動画サービス（デモ）", "aliases": ["動画", "video"],
-     "join_url": "https://example.com/video/join", "cancel_url": "https://example.com/video/cancel",
-     "cancel_memo": "退会手続きにはメールアドレスとパスワードの準備が必要です．",
-     "plans": [{"name": "月額プラン（デモ）", "cycle": "monthly", "amount": 1000},
-               {"name": "年額プラン（デモ）", "cycle": "yearly", "amount": 10000}]},
-    {"id": "music-demo", "name": "音楽サービス（デモ）", "aliases": ["音楽", "music"],
-     "join_url": "https://example.com/music/join", "cancel_url": "https://example.com/music/cancel",
-     "cancel_memo": "契約した窓口を確認してください．",
-     "plans": [{"name": "個人プラン（デモ）", "cycle": "monthly", "amount": 800}]},
-    {"id": "book-demo", "name": "読書サービス（デモ）", "aliases": ["読書", "book"],
-     "join_url": "https://example.com/book/join", "cancel_url": "https://example.com/book/cancel",
-     "cancel_memo": "パスワードの準備が必要です．",
-     "plans": [{"name": "月額プラン（デモ）", "cycle": "monthly", "amount": 500}]},
-]
-```
-
-## src/logic/__init__.py
-
-```python
-"""石井担当の入力検証，並び替え，状態変更．"""
-```
-
-## src/logic/subscriptions.py
-
-```python
-"""UIから独立した登録・解約・再契約の規則．"""
-from datetime import datetime
-from urllib.parse import urlsplit
-import unicodedata
-
-STATUS_LABELS = {"active": "契約中", "trial": "無料トライアル中", "cancelled": "解約済み"}
-CYCLE_LABELS = {"monthly": "月額", "yearly": "年額"}
-SORT_LABELS = {"frequency": "更新頻度順", "registered": "登録順", "deadline": "期限が近い順"}
-
-
-class ValidationError(ValueError):
-    """入力欄ごとのエラーを保持する．"""
-
-    def __init__(self, errors):
-        self.errors = errors
-        super().__init__("入力内容を確認してください．")
-
-
-def normalize_keyword(value):
-    """全角英数字と大文字・小文字の違いを吸収する．"""
-    return unicodedata.normalize("NFKC", value).casefold().strip()
-
-
-def valid_url(value):
-    """HTTP(S)の絶対URLのみ受け付ける．空欄は任意項目として許可する．"""
-    if not value:
-        return True
-    try:
-        parsed = urlsplit(value)
-        return (parsed.scheme in {"http", "https"} and bool(parsed.hostname)
-                and not parsed.username and not parsed.password
-                and not any(char.isspace() for char in value)
-                and parsed.port != 0)
-    except ValueError:
-        return False
-
-
-def parse_time(value):
-    """画面とAPIで共通の分単位の日時形式を読み取る．"""
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M")
-
-
-def validate_subscription(data):
-    """登録内容を検証し，APIへ渡す辞書を返す．"""
-    result = {key: str(data.get(key, "") or "").strip() for key in (
-        "name", "plan_name", "cycle", "joined_at", "join_url", "cancel_url",
-        "cancel_memo", "status", "trial_ends_at", "icon", "service_id",
-    )}
-    errors = {}
-    for key, maximum in (("name", 100), ("plan_name", 100), ("cancel_memo", 1000)):
-        if key != "cancel_memo" and not result[key]:
-            errors[key] = "入力してください．"
-        elif len(result[key]) > maximum:
-            errors[key] = f"{maximum}文字以内で入力してください．"
-    amount = unicodedata.normalize("NFKC", str(data.get("amount", ""))).strip()
-    if not amount or not amount.isascii() or not amount.isdecimal():
-        errors["amount"] = "0以上の整数を円単位で入力してください．"
-    elif int(amount) > 999999999:
-        errors["amount"] = "金額が大きすぎます．"
-    else:
-        result["amount"] = int(amount)
-    if result["cycle"] not in CYCLE_LABELS:
-        errors["cycle"] = "月額または年額を選択してください．"
-    if result["status"] not in STATUS_LABELS:
-        errors["status"] = "契約状態を選択してください．"
-    for key in ("join_url", "cancel_url", "icon"):
-        if len(result[key]) > 2048 or not valid_url(result[key]):
-            errors[key] = "http://またはhttps://で始まるURLを入力してください．"
-    joined = None
-    try:
-        joined = parse_time(result["joined_at"])
-    except ValueError:
-        errors["joined_at"] = "実在する日時を YYYY-MM-DDTHH:MM で入力してください．"
-    if result["status"] == "trial":
-        try:
-            ending = parse_time(result["trial_ends_at"])
-            if joined is not None and ending <= joined:
-                errors["trial_ends_at"] = "入会日時より後の日時を入力してください．"
-        except ValueError:
-            errors["trial_ends_at"] = "トライアル終了日時を YYYY-MM-DDTHH:MM で入力してください．"
-    else:
-        result["trial_ends_at"] = ""
-    if errors:
-        raise ValidationError(errors)
-    return result
-
-
-def sort_subscriptions(items, order="frequency"):
-    """解約済みを末尾に集め，元データを変更せず安定した順序で返す．"""
-    if order not in SORT_LABELS:
-        raise ValueError("不明な並び順です．")
-    def key(pair):
-        index, item = pair
-        cancelled = item.get("status") == "cancelled"
-        registered = (item.get("registered_at") or "", index)
-        if order == "frequency":
-            secondary = ({"weekly": 0, "monthly": 1, "yearly": 2}.get(item.get("cycle"), 9), registered)
-        elif order == "deadline":
-            value = item.get("next_payment_at") or item.get("trial_ends_at")
-            try:
-                time = datetime.fromisoformat(value).timestamp() if value else float("inf")
-            except (ValueError, TypeError, OSError):
-                time = float("inf")
-            secondary = (time, registered)
-        else:
-            secondary = registered
-        return (cancelled, secondary)
-    return [item for _, item in sorted(enumerate(items), key=key)]
-
-
-def cancellation_patch():
-    """解約済みとして記録する更新内容を返す．公式手続きは利用者が行う．"""
-    return {"status": "cancelled", "next_payment_at": None, "trial_ends_at": ""}
-
-
-def reactivation_patch(subscription, joined_at):
-    """再契約の入会日時を検証し，古い次回支払日を破棄する．"""
-    data = validate_subscription({**subscription, "status": "active", "joined_at": joined_at})
-    return {"status": "active", "joined_at": data["joined_at"],
-            "trial_ends_at": "", "next_payment_at": None}
-```
-
-## src/main.py
-
-```python
-"""石井担当機能を起動する単独確認用アプリ．"""
-import argparse
-import os
-from pathlib import Path
-from urllib.parse import quote, unquote
-import flet as ft
-import config
-import theme
-from api_client import ApiClient, ApiError
-from views.preview import preview_list, preview_status
-from views.register import register_view
-
-
-async def main(page: ft.Page):
-    """共通コード未完成でも登録から状態変更まで確認できるようにする．"""
-    page.title = "サブマネ | 石井担当"
-    page.bgcolor = theme.GROUND
-    page.padding = theme.GUTTER
-    page.theme = ft.Theme(color_scheme_seed=theme.ACCENT, font_family=theme.FONT)
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.fonts = {theme.FONT: "fonts/ZenKakuGothicNew-Regular.ttf"}
-    page.window.width = 390
-    page.window.height = 850
-    api = ApiClient()
-    state = {"order": "frequency", "notice": "", "route_version": 0}
-    content = ft.Column(spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)
-    page.add(ft.Text("サブマネ", color=theme.ACCENT, size=24, weight=ft.FontWeight.BOLD),
-             ft.Text("ローカル試作版：正式なサービス情報はAPI接続後に取得します．" if config.USE_DUMMY_DATA else "API接続モード",
-                     size=12, color=theme.INK_SUB), content)
-
-    def navigate(route):
-        """画面遷移を単独確認用mainへ集約する．"""
-        page.navigate(route)
-
-    async def saved(item):
-        """保存完了の案内を一覧へ渡す．"""
-        state["notice"] = item["name"] + "を保存しました．"
-        await page.push_route("/")
-
-    async def order_changed(event):
-        """選んだ並び順で一覧を再取得して表示する．"""
-        state["order"] = event.control.value
-        await route_changed()
-
-    async def route_changed(event=None):
-        """取得失敗と読み込み中を表示し，遅い応答による画面巻き戻りを防ぐ．"""
-        state["route_version"] += 1
-        version = state["route_version"]
-        route = page.route or "/"
-        content.controls = [ft.ProgressRing()]
-        page.update()
-        try:
-            if route == "/register":
-                view = register_view(page, api, on_saved=saved, on_back=lambda: navigate("/"))
-            elif route.startswith("/status/"):
-                item = await api.get_subscription(unquote(route[len("/status/"):]))
-                view = preview_status(page, item, api, lambda: navigate("/"), saved)
-            else:
-                items = await api.list_subscriptions()
-                view = preview_list(page, items, state["order"], order_changed,
-                                    lambda: navigate("/register"),
-                                    lambda sub_id: navigate("/status/" + quote(sub_id, safe="")),
-                                    state["notice"])
-                state["notice"] = ""
-        except ApiError as error:
-            view = ft.Column(controls=[ft.Text(str(error), color=theme.ERROR),
-                                       ft.Button("再試行", on_click=route_changed),
-                                       ft.TextButton("一覧へ戻る", on_click=lambda e: navigate("/"))])
-        if version == state["route_version"]:
-            content.controls = [view]
-            page.update()
-
-    page.on_route_change = route_changed
-    await route_changed()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="サブマネ 石井担当の動作確認")
-    parser.add_argument("--web", action="store_true", help="ブラウザで確認")
-    parser.add_argument("--headless", action="store_true", help="ブラウザを自動で開かない")
-    parser.add_argument("--port", type=int, default=8550)
-    args = parser.parse_args()
-    view = ft.AppView.WEB_BROWSER if args.web else ft.AppView.FLET_APP
-    if args.headless:
-        os.environ["FLET_FORCE_WEB_SERVER"] = "true"
-        view = ft.AppView.WEB_BROWSER
-    ft.run(main, view=view, host="127.0.0.1", port=args.port,
-           assets_dir=str(Path(__file__).parent / "assets"))
-```
-
-## src/theme.py
-
-```python
-"""home.htmlに合わせた共通デザイン定数．"""
-GROUND = "#F3F5F4"
-SURFACE = "#FFFFFF"
-INK = "#14201C"
-INK_SUB = "#4A5552"
-LINE = "#D3D8D6"
-ACCENT = "#0E6B5C"
-ACCENT_SOFT = "#E0EFE9"
-TRIAL = "#B45309"
-OFF_FILL = "#D3D8D6"
-OFF_INK = "#5A6360"
-ERROR = "#B3261E"
-GUTTER = 24
-FONT = "Zen Kaku Gothic New"
-TILE_COLORS = ("#7A2E3A", "#2F5D50", "#1F3A5F", "#8A4B14")
-```
-
-## src/views/__init__.py
-
-```python
-"""登録画面と状態変更の動作確認画面．"""
-```
-
-## src/views/preview.py
-
-```python
-"""担当機能を単独で確認する一覧と状態変更画面．チームのhome/detailとは別．"""
-import flet as ft
-import theme
-from components.service_icon import service_icon
-from components.sort_selector import sort_selector
-from components.status_actions import status_actions
-from logic.subscriptions import CYCLE_LABELS, STATUS_LABELS, sort_subscriptions
-
-
-def preview_list(page, items, order, on_order, on_add, on_detail, notice=""):
-    """登録結果・グレーアウト・並び順の動作確認用一覧を返す．"""
-    active = sum(item["status"] != "cancelled" for item in items)
-    trial = sum(item["status"] == "trial" for item in items)
-    rows = []
-    for index, item in enumerate(sort_subscriptions(items, order)):
-        cancelled = item["status"] == "cancelled"
-        rows.append(ft.Container(
-            bgcolor=theme.SURFACE, border_radius=16, padding=14,
-            on_click=lambda e, sub_id=item["id"]: on_detail(sub_id),
-            content=ft.Row(spacing=14, controls=[
-                service_icon(item, color_index=index),
-                ft.Column(expand=True, spacing=4, controls=[
-                    ft.Text(item["name"], weight=ft.FontWeight.BOLD,
-                            color=theme.OFF_INK if cancelled else theme.INK),
-                    ft.Text(f"{CYCLE_LABELS.get(item['cycle'], item['cycle'])} · {item['amount']:,}円", color=theme.INK_SUB),
-                    ft.Text(STATUS_LABELS[item["status"]], size=12,
-                            color=theme.TRIAL if item["status"] == "trial" else theme.INK_SUB),
-                ]), ft.Icon(ft.Icons.CHEVRON_RIGHT, color=theme.INK_SUB),
-            ])))
-    return ft.Column(spacing=16, controls=[
-        ft.Text("石井担当の動作確認", size=26, weight=ft.FontWeight.BOLD),
-        ft.Text("登録・契約状態・アイコン表示・並び替えを確認できます．", color=theme.INK_SUB),
-        ft.Text(notice, color=theme.ACCENT, visible=bool(notice)),
-        ft.Button("サブスクを追加", icon=ft.Icons.ADD, height=48, bgcolor=theme.ACCENT,
-                  color=theme.SURFACE, on_click=lambda e: on_add()),
-        ft.Text(f"契約中 {active}件 / うちトライアル {trial}件 / 解約済み {len(items)-active}件"),
-        sort_selector(on_order, value=order),
-        ft.Text("期限順はAPIの次回支払日時またはトライアル終了日時を使用します．日時未取得の契約は後ろに表示します．",
-                color=theme.INK_SUB, size=12, visible=order == "deadline"),
-        *rows,
-        ft.Text("まだ登録がありません．「サブスクを追加」から登録してください．", visible=not bool(items), color=theme.INK_SUB),
-    ])
-
-
-def preview_status(page, item, api, on_back, on_changed):
-    """詳細担当への組み込み前に状態変更部品を確認する．"""
-    return ft.Column(spacing=16, controls=[
-        ft.TextButton("一覧に戻る", on_click=lambda e: on_back()),
-        service_icon(item, size=72),
-        ft.Text(item["name"], size=26, weight=ft.FontWeight.BOLD),
-        ft.Text(STATUS_LABELS[item["status"]], color=theme.INK_SUB),
-        ft.Text(f"{item['plan_name']} / {CYCLE_LABELS[item['cycle']]} / {item['amount']:,}円"),
-        ft.Text("入会日時：" + item["joined_at"]),
-        ft.Text("トライアル終了：" + item.get("trial_ends_at", ""), visible=item["status"] == "trial"),
-        ft.Text("退会に必要な情報", size=16, weight=ft.FontWeight.BOLD),
-        ft.Text(item.get("cancel_memo") or "未登録", color=theme.INK_SUB),
-        ft.Divider(color=theme.LINE), status_actions(page, item, api, on_changed),
-    ])
-```
-
-## src/views/register.py
-
-```python
-"""石井担当：定番サービス検索と手入力によるサブスク登録画面．"""
-import asyncio
-from datetime import datetime
-import flet as ft
-import theme
-from api_client import ApiClient, ApiError
-from logic.subscriptions import CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
-
-
-def register_view(page, api=None, on_saved=None, on_back=None):
-    """pageのみでも生成でき，共通APIと遷移コールバックを注入できる．"""
-    api = api or ApiClient()
-    message = ft.Text("", color=theme.ERROR)
-    results = ft.Column(spacing=8)
-    plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
-    selected = {"service": None, "search_version": 0, "busy": False}
-    fields = {
-        "name": ft.TextField(label="サービス名 *", max_length=100),
-        "plan_name": ft.TextField(label="料金プラン名 *", max_length=100),
-        "cycle": ft.Dropdown(label="更新周期 *", value="monthly", options=[
-            ft.DropdownOption(key=key, text=value) for key, value in CYCLE_LABELS.items()]),
-        "amount": ft.TextField(label="1回の支払額（円） *", keyboard_type=ft.KeyboardType.NUMBER,
-                               helper="無料トライアル中も，有料移行後の金額を入力してください．"),
-        "joined_at": ft.TextField(label="入会日時 *", value=datetime.now().strftime("%Y-%m-%dT%H:%M"),
-                                  helper="日本時間・分単位の例：2026-10-05T12:30"),
-        "status": ft.Dropdown(label="契約状態 *", value="active", options=[
-            ft.DropdownOption(key=key, text=value) for key, value in STATUS_LABELS.items()]),
-        "trial_ends_at": ft.TextField(label="トライアル終了日時 *", visible=False,
-                                      hint_text="2026-11-05T12:30"),
-        "join_url": ft.TextField(label="入会URL（任意）", hint_text="https://…"),
-        "cancel_url": ft.TextField(label="退会URL（任意）", hint_text="https://…"),
-        "cancel_memo": ft.TextField(label="退会に必要な情報（任意）", multiline=True,
-                                    min_lines=2, max_lines=4, max_length=1000,
-                                    helper="例：メールアドレスとパスワードの準備が必要．パスワード自体は入力しないでください．"),
+# アプリの全コード
+
+2026-10-19更新．ishiiブランチのソース・テスト・設定・起動スクリプト・独立HTMLデモの全文です．画像の取得元はsrc/assets/icons/sources.jsonに保存しています．
+
+## docs/home_mock.html
+
+```html
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>サブマネ | ホーム</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
+<style>
+/* ==========================================================
+   デザイントークン(他画面でも同じ値を使うと見た目が揃います)
+   ========================================================== */
+:root {
+  --ground: #F3F5F4;      /* 画面の地色 */
+  --surface: #FFFFFF;     /* ボタン・タブバーの面 */
+  --ink: #14201C;         /* 本文 */
+  --ink-sub: #4A5552;     /* 補足テキスト */
+  --line: #D3D8D6;        /* 枠線 */
+  --accent: #0E6B5C;      /* 主要ボタン・選択中 */
+  --accent-soft: #DCEBE7; /* 選択中タブの背景 */
+  --trial: #B45309;       /* 無料トライアルのバッジ */
+  --off-fill: #D3D8D6;    /* 解約済みアイコンの面 */
+  --off-ink: #5A6360;     /* 解約済みの文字 */
+  --dot: #AEB6B3;         /* ページ位置の点(非選択) */
+  --font: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --gutter: 24px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: inherit; text-decoration: none; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+/* PCで開いたときはスマホ幅で中央に置く */
+.app {
+  max-width: 430px;
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ---------- ヘッダー ---------- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px var(--gutter) 0;
+}
+.brand { font-size: 22px; font-weight: 900; letter-spacing: 0.02em; line-height: 44px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.btn-add {
+  height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: 22px;
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-account {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- 見出し ---------- */
+.intro { padding: 24px var(--gutter) 0; }
+.intro h1 { margin: 0; font-size: 26px; font-weight: 700; line-height: 34px; }
+.summary { margin: 4px 0 0; font-size: 13px; line-height: 20px; color: var(--ink-sub); }
+
+/* ---------- 並び替えと凡例 ---------- */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px var(--gutter) 0;
+}
+.sort { position: relative; display: flex; align-items: center; }
+.sort svg { position: absolute; pointer-events: none; }
+.sort .icon-sort { left: 12px; }
+.sort .icon-chevron { right: 12px; }
+.sort select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 44px;
+  padding: 0 34px 0 34px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.legend { display: flex; align-items: center; gap: 12px; margin: 0; padding: 0; list-style: none; font-size: 11px; line-height: 16px; color: var(--ink-sub); }
+.legend li { display: flex; align-items: center; gap: 5px; }
+.legend-trial {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--trial);
+  display: flex; align-items: center; justify-content: center;
+}
+.legend-off { width: 14px; height: 14px; border-radius: 4px; background: #C3CAC7; }
+
+/* ---------- アイコン一覧(横スワイプでページ送り) ---------- */
+.pager {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  padding-top: 28px;
+}
+.pager::-webkit-scrollbar { display: none; }
+.page {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: start;
+  gap: 26px 14px;
+  padding: 8px var(--gutter) 0; /* 上8pxはトライアルバッジのはみ出し分 */
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tile-icon {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+}
+.tile-icon img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; display: block; }
+.tile-name {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--trial);
+  border: 3px solid var(--ground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 解約済み: アイコンは残してグレーアウト */
+.tile.is-cancelled { color: var(--off-ink); }
+.tile.is-cancelled .tile-icon { background: var(--off-fill) !important; color: var(--off-ink); }
+.tile.is-cancelled .tile-icon img { filter: grayscale(1); opacity: 0.55; }
+
+/* ---------- ページ位置 ---------- */
+.page-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px var(--gutter) 24px;
+}
+.dots { display: flex; align-items: center; }
+.dot {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 28px;
+  height: 44px; /* タップしやすい大きさを確保 */
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.dot::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--dot);
+  transition: width 0.2s, background 0.2s;
+}
+.dot[aria-current="true"]::before { width: 20px; background: var(--accent); }
+.page-count { margin: 0; font-size: 12px; line-height: 18px; color: var(--ink-sub); }
+
+/* ---------- 0件のとき ---------- */
+.empty { padding: 48px var(--gutter); text-align: center; }
+.empty p { margin: 0 0 20px; font-size: 14px; line-height: 24px; color: var(--ink-sub); }
+.empty .btn-add { display: inline-flex; }
+
+.spacer { flex: 1 1 auto; }
+
+/* ---------- 下部タブ ---------- */
+.tabbar {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  background: var(--surface);
+  border-top: 1px solid #DDE2E0;
+  padding: 8px var(--gutter) calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.tab {
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--ink-sub);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.tab-icon { width: 56px; height: 30px; border-radius: 15px; display: flex; align-items: center; justify-content: center; }
+.tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
+.tab[aria-current="page"] .tab-icon { background: var(--accent-soft); }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot::before { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div class="brand">サブマネ</div>
+    <div class="header-actions">
+      <a class="btn-add" data-link="register" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        追加
+      </a>
+      <a class="btn-account" data-link="account" href="#" aria-label="アカウント">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <h1>契約中のサブスク</h1>
+      <p class="summary" id="summary"></p>
+    </section>
+
+    <div class="controls" id="controls">
+      <label class="sort">
+        <svg class="icon-sort" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M7 20l-3-3M7 20l3-3M13 7h8M13 12h6M13 17h4"/></svg>
+        <select id="sort" aria-label="並び順">
+          <option value="frequency">更新頻度順</option>
+          <option value="registered">登録順</option>
+        </select>
+        <svg class="icon-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </label>
+      <ul class="legend">
+        <li>
+          <span class="legend-trial"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+          トライアル中
+        </li>
+        <li><span class="legend-off"></span>解約済み</li>
+      </ul>
+    </div>
+
+    <!-- アイコン一覧。中身は下のスクリプトが描画する -->
+    <div class="pager" id="pager" tabindex="0" aria-label="サブスク一覧"></div>
+
+    <div class="page-status" id="pageStatus">
+      <div class="dots" id="dots"></div>
+      <p class="page-count" id="pageCount" aria-live="polite"></p>
+    </div>
+
+    <div class="empty" id="empty" hidden>
+      <p>まだサブスクが登録されていません。<br>契約中のサービスを追加すると、ここに一覧で表示されます。</p>
+      <a class="btn-add" data-link="register" href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        サブスクを追加
+      </a>
+    </div>
+  </main>
+
+  <div class="spacer"></div>
+
+  <nav class="tabbar" aria-label="メインメニュー">
+    <a class="tab" data-link="home" href="#" aria-current="page">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg></span>
+      ホーム
+    </a>
+    <a class="tab" data-link="breakdown" href="#">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg></span>
+      内訳
+    </a>
+    <a class="tab" data-link="deadline" href="#">
+      <span class="tab-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg></span>
+      期限
+    </a>
+  </nav>
+</div>
+
+<script>
+/* ==========================================================
+   1. 他画面へのリンク先
+      ファイル名は仮です。各担当の画面ができたらここだけ直してください。
+   ========================================================== */
+const ROUTES = {
+  home: 'home.html',
+  register: 'register.html',   // サブスク登録画面
+  detail: 'detail.html',       // 詳細画面(?id=xxx を付けて開く)
+  breakdown: 'breakdown.html', // 内訳画面
+  deadline: 'deadline.html',   // 期限画面
+  account: 'account.html',     // 会員登録・ログイン
+};
+
+/* ==========================================================
+   2. 表示するデータ(サンプル)
+      DB・APIができたら loadSubscriptions() の中身を差し替えてください。
+        id     : 一意なID
+        name   : サービス名
+        cycle  : 'monthly' | 'yearly'            料金プランの更新周期
+        status : 'active' | 'trial' | 'cancelled' 契約中 / 無料トライアル中 / 解約済み
+        icon   : アイコン画像のURL(省略すると頭文字のタイルを表示)
+   ========================================================== */
+const SAMPLE_SUBSCRIPTIONS = [
+  { id: 'netflix',   name: 'Netflix',          cycle: 'monthly', status: 'active' },
+  { id: 'spotify',   name: 'Spotify',          cycle: 'monthly', status: 'active' },
+  { id: 'audible',   name: 'Audible',          cycle: 'monthly', status: 'cancelled' },
+  { id: 'unext',     name: 'U-NEXT',           cycle: 'monthly', status: 'trial' },
+  { id: 'amazon',    name: 'Amazonプライム',    cycle: 'yearly',  status: 'active' },
+  { id: 'youtube',   name: 'YouTube Premium',  cycle: 'monthly', status: 'active' },
+  { id: 'disney',    name: 'Disney+',          cycle: 'monthly', status: 'active' },
+  { id: 'fod',       name: 'FODプレミアム',     cycle: 'monthly', status: 'cancelled' },
+  { id: 'dazn',      name: 'DAZN',             cycle: 'monthly', status: 'active' },
+  { id: 'applemusic',name: 'Apple Music',      cycle: 'monthly', status: 'active' },
+  { id: 'adobe',     name: 'Adobe CC',         cycle: 'yearly',  status: 'active' },
+  { id: 'hulu',      name: 'Hulu',             cycle: 'monthly', status: 'active' },
+  { id: 'kindle',    name: 'Kindle Unlimited', cycle: 'monthly', status: 'trial' },
+  { id: 'lemino',    name: 'Lemino',           cycle: 'monthly', status: 'cancelled' },
+  { id: 'abema',     name: 'ABEMAプレミアム',   cycle: 'monthly', status: 'active' },
+  { id: 'icloud',    name: 'iCloud+',          cycle: 'monthly', status: 'active' },
+  { id: 'danime',    name: 'dアニメストア',     cycle: 'monthly', status: 'active' },
+  { id: 'nhk',       name: 'NHKオンデマンド',   cycle: 'monthly', status: 'cancelled' },
+];
+
+async function loadSubscriptions() {
+  // 例: const res = await fetch('/api/subscriptions'); return res.json();
+  return SAMPLE_SUBSCRIPTIONS;
+}
+
+/* ==========================================================
+   3. 画面の描画
+   ========================================================== */
+const PER_PAGE = 12; // 1ページ = 4列 x 3行
+const TILE_COLORS = ['#7A2E3A', '#2F5D50', '#1F3A5F', '#8A4B14', '#2B4C7E', '#3D4A1F', '#6B2D5C', '#23515E', '#4A3728', '#36594A', '#5B3F8C', '#5E2A4F'];
+const CYCLE_RANK = { weekly: 0, monthly: 1, yearly: 2 }; // 小さいほど更新頻度が高い
+const CLOCK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+const el = (id) => document.getElementById(id);
+const pager = el('pager');
+let subscriptions = [];
+
+// 並び替え。どの順でも解約済みは末尾にまとめる
+function sortSubscriptions(list, order) {
+  const indexed = list.map((sub, index) => ({ sub, index }));
+  indexed.sort((a, b) => {
+    const cancelledA = a.sub.status === 'cancelled' ? 1 : 0;
+    const cancelledB = b.sub.status === 'cancelled' ? 1 : 0;
+    if (cancelledA !== cancelledB) return cancelledA - cancelledB;
+    if (order === 'frequency') {
+      const rankA = CYCLE_RANK[a.sub.cycle] ?? 9;
+      const rankB = CYCLE_RANK[b.sub.cycle] ?? 9;
+      if (rankA !== rankB) return rankA - rankB;
     }
+    return a.index - b.index; // 同順位は登録順
+  });
+  return indexed.map((item) => item.sub);
+}
 
-    def status_changed(event):
-        """無料トライアルを選択したときだけ終了日時を表示する．"""
-        fields["trial_ends_at"].visible = fields["status"].value == "trial"
-        page.update()
+function createTile(sub, colorIndex) {
+  const tile = document.createElement('a');
+  tile.className = 'tile';
+  tile.href = ROUTES.detail + '?id=' + encodeURIComponent(sub.id);
 
-    fields["status"].on_select = status_changed
+  const icon = document.createElement('span');
+  icon.className = 'tile-icon';
+  if (sub.icon) {
+    const img = document.createElement('img');
+    img.src = sub.icon;
+    img.alt = '';
+    icon.appendChild(img);
+  } else {
+    icon.style.background = sub.color || TILE_COLORS[colorIndex % TILE_COLORS.length];
+    icon.appendChild(document.createTextNode(sub.name.charAt(0)));
+  }
 
-    def apply_plan(event=None):
-        """選択したプランを自動入力し，その後の手修正を許可する．"""
-        service = selected["service"]
-        if service and plans.value is not None:
-            plan = service["plans"][int(plans.value)]
-            for key, source in (("plan_name", "name"), ("cycle", "cycle"), ("amount", "amount")):
-                fields[key].value = str(plan[source])
-        page.update()
+  let stateLabel = '';
+  if (sub.status === 'trial') {
+    const badge = document.createElement('span');
+    badge.className = 'tile-badge';
+    badge.innerHTML = CLOCK_SVG;
+    icon.appendChild(badge);
+    stateLabel = '(無料トライアル中)';
+  } else if (sub.status === 'cancelled') {
+    tile.classList.add('is-cancelled');
+    stateLabel = '(解約済み)';
+  }
 
-    plans.on_select = apply_plan
+  const name = document.createElement('span');
+  name.className = 'tile-name';
+  name.textContent = sub.name;
 
-    def choose_service(service):
-        """名称，URL，メモとプラン候補を取り込む．"""
-        if selected["busy"]:
-            return
-        selected["service"] = service
-        for key in ("name", "join_url", "cancel_url", "cancel_memo"):
-            fields[key].value = service.get(key, "")
-        plans.options = [ft.DropdownOption(key=str(index), text=plan["name"])
-                         for index, plan in enumerate(service.get("plans", []))]
-        plans.visible = bool(plans.options)
-        plans.value = "0" if plans.options else None
-        apply_plan()
-        results.controls = [ft.Text("選択済み：" + service["name"], color=theme.ACCENT)]
-        page.update()
+  tile.setAttribute('aria-label', sub.name + stateLabel + 'の詳細を開く');
+  tile.append(icon, name);
+  return tile;
+}
 
-    async def search_services(event=None):
-        """連続入力では古い検索結果を破棄し，失敗時は再試行できる．"""
-        selected["search_version"] += 1
-        version = selected["search_version"]
-        await asyncio.sleep(0.25)
-        if version != selected["search_version"]:
-            return
-        results.controls = [ft.ProgressRing(width=20, height=20)]
-        page.update()
-        try:
-            services = await api.search_services(search.value or "")
-            if version != selected["search_version"]:
-                return
-            results.controls = [ft.Button(service["name"], height=44,
-                               on_click=lambda e, service=service: choose_service(service)) for service in services]
-            if not services:
-                results.controls = [ft.Text("該当するサービスがありません．下の欄へ手入力できます．", color=theme.INK_SUB)]
-        except ApiError as error:
-            results.controls = [ft.Text(str(error), color=theme.ERROR),
-                                ft.Button("検索を再試行", on_click=search_services)]
-        page.update()
+function render() {
+  const total = subscriptions.length;
+  const cancelled = subscriptions.filter((s) => s.status === 'cancelled').length;
+  const trial = subscriptions.filter((s) => s.status === 'trial').length;
 
-    search = ft.TextField(label="定番サービスを名称で検索", prefix_icon=ft.Icons.SEARCH,
-                          on_change=search_services, on_submit=search_services)
+  const isEmpty = total === 0;
+  el('empty').hidden = !isEmpty;
+  el('controls').hidden = isEmpty;
+  pager.hidden = isEmpty;
+  el('pageStatus').hidden = isEmpty;
+  el('summary').textContent = isEmpty
+    ? ''
+    : `契約中 ${total - cancelled}件 / うちトライアル ${trial}件 / 解約済み ${cancelled}件`;
+  if (isEmpty) return;
 
-    def clear_service(event):
-        """定番サービスとの関連を解除し，手入力用の空欄に戻す．"""
-        selected["service"] = None
-        for key in ("name", "plan_name", "amount", "join_url", "cancel_url", "cancel_memo"):
-            fields[key].value = ""
-        plans.visible = False
-        results.controls = []
-        page.update()
+  // 色は登録順で固定し、並び替えても同じサービスは同じ色にする
+  const colorIndex = new Map(subscriptions.map((s, i) => [s.id, i]));
+  const sorted = sortSubscriptions(subscriptions, el('sort').value);
 
-    async def save(event):
-        """入力を検証し，二重クリックによる重複登録を防ぐ．"""
-        if selected["busy"]:
-            return
-        for control in fields.values():
-            if isinstance(control, ft.Dropdown):
-                control.error_text = None
-            else:
-                control.error = None
-        message.value = ""
-        message.color = theme.ERROR
-        service = selected["service"] or {}
-        data = {key: control.value for key, control in fields.items()}
-        data.update(icon=service.get("icon", ""), service_id=service.get("id", ""))
-        try:
-            data = validate_subscription(data)
-        except ValidationError as error:
-            for key, value in error.errors.items():
-                if key in fields:
-                    if isinstance(fields[key], ft.Dropdown):
-                        fields[key].error_text = value
-                    else:
-                        fields[key].error = value
-            message.value = "入力内容を確認してください．"
-            page.update()
-            return
-        selected["busy"] = True
-        save_button.disabled = True
-        for control in [search, plans, manual_button, back_button, *fields.values()]:
-            control.disabled = True
-        page.update()
-        try:
-            item = await api.create_subscription(data)
-        except ApiError as error:
-            message.value = str(error)
-        else:
-            if on_saved:
-                result = on_saved(item)
-                if asyncio.iscoroutine(result):
-                    await result
-            else:
-                message.color = theme.ACCENT
-                message.value = "登録しました．"
-        finally:
-            selected["busy"] = False
-            save_button.disabled = False
-            for control in [search, plans, manual_button, back_button, *fields.values()]:
-                control.disabled = False
-            page.update()
+  pager.textContent = '';
+  for (let i = 0; i < sorted.length; i += PER_PAGE) {
+    const page = document.createElement('div');
+    page.className = 'page';
+    sorted.slice(i, i + PER_PAGE).forEach((sub) => page.appendChild(createTile(sub, colorIndex.get(sub.id))));
+    pager.appendChild(page);
+  }
+  pager.scrollLeft = 0;
+  renderDots();
+}
 
-    save_button = ft.Button("この内容で登録する", icon=ft.Icons.ADD, bgcolor=theme.ACCENT,
-                            color=theme.SURFACE, height=48, on_click=save)
-    manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
-    back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
-    return ft.Column(spacing=16, controls=[
-        back_button, ft.Text("サブスクを追加", size=26, weight=ft.FontWeight.BOLD, color=theme.INK),
-        ft.Text("サービスを選ぶか，契約内容を手入力してください．", color=theme.INK_SUB),
-        search, ft.Button("定番サービスを表示・検索", height=44, on_click=search_services), results,
-        manual_button, plans, *fields.values(), message, save_button,
-    ])
-```
+function pageTotal() { return pager.children.length; }
+function currentPage() { return Math.round(pager.scrollLeft / pager.clientWidth) || 0; }
 
-## tests/test_api_session.py
+function renderDots() {
+  const dots = el('dots');
+  dots.textContent = '';
+  for (let i = 0; i < pageTotal(); i++) {
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'dot';
+    dot.setAttribute('aria-label', (i + 1) + 'ページ目を表示');
+    dot.addEventListener('click', () => {
+      pager.scrollTo({ left: i * pager.clientWidth, behavior: 'smooth' });
+    });
+    dots.appendChild(dot);
+  }
+  dots.hidden = pageTotal() < 2;
+  updatePageStatus();
+}
 
-```python
-"""Cookie認証を保持し，取得エラーを画面用の例外に変換する．"""
-import asyncio
-import httpx
-import pytest
-from api_client import ApiClient, ApiError
+function updatePageStatus() {
+  const current = currentPage();
+  [...el('dots').children].forEach((dot, i) => dot.setAttribute('aria-current', String(i === current)));
+  el('pageCount').textContent = pageTotal() < 2 ? '' : `${current + 1} / ${pageTotal()}`;
+}
 
+/* ==========================================================
+   4. 初期化
+   ========================================================== */
+document.querySelectorAll('[data-link]').forEach((a) => { a.href = ROUTES[a.dataset.link] || '#'; });
+el('sort').addEventListener('change', render);
+pager.addEventListener('scroll', updatePageStatus, { passive: true });
+window.addEventListener('resize', updatePageStatus);
 
-def test_cookie_session_is_shared_across_requests():
-    async def scenario():
-        seen = []
-        def handler(request):
-            seen.append(request)
-            if request.url.path == "/api/login":
-                return httpx.Response(200, json={"ok": True}, headers={"set-cookie": "session=test; Path=/; HttpOnly; Secure"})
-            return httpx.Response(200, json=[])
-        async with httpx.AsyncClient(base_url="https://test.example/api/", transport=httpx.MockTransport(handler)) as session:
-            api = ApiClient(use_dummy=False, base_url="https://test.example/api", http_session=session)
-            await api.http_session().post("login", json={"email": "demo@example.com"})
-            await api.search_services("動画")
-            await api.list_subscriptions()
-            assert seen[1].headers["cookie"] == "session=test"
-            assert seen[2].headers["cookie"] == "session=test"
-            assert "authorization" not in seen[2].headers
-            await api.aclose()
-            assert not session.is_closed
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("status", [401, 403, 500])
-def test_http_errors_become_api_errors(status):
-    async def scenario():
-        async with httpx.AsyncClient(base_url="https://test.example/", transport=httpx.MockTransport(
-                lambda request: httpx.Response(status, json={"error": "details"}))) as session:
-            api = ApiClient(use_dummy=False, base_url="https://test.example", http_session=session)
-            with pytest.raises(ApiError):
-                await api.list_subscriptions()
-    asyncio.run(scenario())
-```
-
-## tests/test_storage.py
-
-```python
-"""ローカル保存の永続化とデータ破損時の保護を確認する．"""
-import asyncio
-import pytest
-from api_client import ApiClient, ApiError
-from logic.subscriptions import cancellation_patch, reactivation_patch
-
-
-def test_save_cancel_reactivate_and_reload(tmp_path):
-    async def scenario():
-        client = ApiClient(tmp_path / "data.json", use_dummy=True)
-        item = await client.create_subscription({"name": "手入力", "plan_name": "年間", "cycle": "yearly",
-                    "amount": "1200", "joined_at": "2026-01-31T12:00", "status": "active",
-                    "join_url": "https://example.com/join", "cancel_url": "https://example.com/cancel"})
-        cancelled = await client.update_subscription(item["id"], cancellation_patch())
-        assert cancelled["status"] == "cancelled"
-        assert cancelled["join_url"] == item["join_url"]
-        active = await client.update_subscription(item["id"], reactivation_patch(cancelled, "2026-10-05T12:00"))
-        assert active["id"] == item["id"]
-        reloaded = await ApiClient(tmp_path / "data.json", use_dummy=True).list_subscriptions()
-        assert len(reloaded) == 1 and reloaded[0]["joined_at"] == "2026-10-05T12:00"
-    asyncio.run(scenario())
-
-
-def test_corrupt_file_is_not_overwritten(tmp_path):
-    file = tmp_path / "data.json"
-    file.write_text("broken", encoding="utf-8")
-    with pytest.raises(ApiError):
-        asyncio.run(ApiClient(file, use_dummy=True).list_subscriptions())
-    assert file.read_text(encoding="utf-8") == "broken"
-
-
-def test_search_normalizes_full_width_and_does_not_mutate_master(tmp_path):
-    async def scenario():
-        client = ApiClient(tmp_path / "data.json", use_dummy=True)
-        values = await client.search_services("ＶＩＤＥＯ")
-        assert len(values) == 1
-        values[0]["name"] = "書き換え"
-        assert (await client.search_services("video"))[0]["name"] != "書き換え"
-    asyncio.run(scenario())
-```
-
-## tests/test_subscriptions.py
-
-```python
-"""登録の境界値，並び順，解約・再契約で失うべき情報を検証する．"""
-import pytest
-from logic.subscriptions import (
-    ValidationError, cancellation_patch, reactivation_patch,
-    sort_subscriptions, validate_subscription, valid_url,
-)
-
-
-def record(**changes):
-    """登録可能な基本データを作る．"""
-    return {"name": "テスト", "plan_name": "月額", "amount": "1000", "cycle": "monthly",
-            "status": "active", "joined_at": "2026-01-31T12:00", **changes}
-
-
-def test_registration_normalizes_amount_and_preserves_manual_urls():
-    data = validate_subscription(record(amount="１０００", join_url="https://example.com/join"))
-    assert data["amount"] == 1000
-    assert data["join_url"] == "https://example.com/join"
-
-
-@pytest.mark.parametrize("changes,field", [
-    ({"amount": "-1"}, "amount"), ({"amount": "1.5"}, "amount"),
-    ({"amount": ""}, "amount"), ({"amount": "1000000000"}, "amount"),
-    ({"name": " "}, "name"), ({"plan_name": ""}, "plan_name"),
-    ({"joined_at": "2026-02-29T12:00"}, "joined_at"),
-    ({"join_url": "javascript:alert(1)"}, "join_url"),
-    ({"cancel_url": "https://user:pass@example.com"}, "cancel_url"),
-    ({"cycle": "weekly"}, "cycle"), ({"status": "unknown"}, "status"),
-    ({"status": "trial", "trial_ends_at": ""}, "trial_ends_at"),
-    ({"status": "trial", "trial_ends_at": "2026-01-30T12:00"}, "trial_ends_at"),
-])
-def test_invalid_registration(changes, field):
-    with pytest.raises(ValidationError) as raised:
-        validate_subscription(record(**changes))
-    assert field in raised.value.errors
-
-
-def test_zero_yen_and_leap_day_are_valid():
-    assert validate_subscription(record(amount="0", joined_at="2028-02-29T12:00"))["amount"] == 0
-
-
-def test_trial_records_ending_and_cancellation_discards_it():
-    data = validate_subscription(record(status="trial", trial_ends_at="2026-02-28T12:00"))
-    assert data["trial_ends_at"] == "2026-02-28T12:00"
-    cancelled = validate_subscription({**data, **cancellation_patch()})
-    assert cancelled["trial_ends_at"] == ""
-    assert cancelled["cancel_url"] == data["cancel_url"]
-
-
-def test_reactivation_replaces_joined_date_and_clears_old_payment():
-    patch = reactivation_patch(record(status="cancelled", next_payment_at="2026-02-28T12:00"), "2026-10-05T12:00")
-    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00", "trial_ends_at": "", "next_payment_at": None}
-
-
-def test_sort_keeps_cancelled_last_and_does_not_mutate_input():
-    items = [record(id="cancelled", status="cancelled"), record(id="year", cycle="yearly"), record(id="month")]
-    assert [item["id"] for item in sort_subscriptions(items)] == ["month", "year", "cancelled"]
-    assert [item["id"] for item in sort_subscriptions(items, "registered")] == ["year", "month", "cancelled"]
-    assert [item["id"] for item in items] == ["cancelled", "year", "month"]
-
-
-def test_deadline_sort_handles_unknown_dates_and_cancelled():
-    items = [record(id="unknown"), record(id="later", next_payment_at="2026-12-01T00:00+09:00"),
-             record(id="trial", status="trial", trial_ends_at="2026-10-10T00:00"),
-             record(id="cancelled", status="cancelled", next_payment_at="2026-01-01T00:00")]
-    assert [item["id"] for item in sort_subscriptions(items, "deadline")] == ["trial", "later", "unknown", "cancelled"]
-
-
-@pytest.mark.parametrize("url", ["https://example.com", "http://example.com/path", ""])
-def test_valid_url(url):
-    assert valid_url(url)
-```
-
-## tests/test_ui_workflow.py
-
-```python
-"""Fletコントロールの生成と，画面イベントから保存までの流れを確認する．"""
-import asyncio
-import flet as ft
-from api_client import ApiClient
-from components.service_icon import service_icon
-from components.status_actions import status_actions
-from views.register import register_view
-from views.preview import preview_list, preview_status
-
-
-class PageStub:
-    """画面イベントの検証に必要な更新・遷移を記録する．"""
-
-    def update(self):
-        """描画通信は行わない．"""
-
-    def navigate(self, route):
-        """検証中の遷移先を記録する．"""
-        self.route = route
-
-
-def test_registration_search_plan_and_save(tmp_path):
-    async def scenario():
-        page = PageStub()
-        client = ApiClient(tmp_path / "records.json", use_dummy=True)
-        saved = []
-        view = register_view(page, client, on_saved=saved.append)
-        fields = {control.label: control for control in view.controls if isinstance(control, (ft.TextField, ft.Dropdown))}
-        search_button = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
-        await search_button.on_click(None)
-        results = next(control for control in view.controls if isinstance(control, ft.Column))
-        results.controls[0].on_click(None)
-        assert fields["サービス名 *"].value == "動画サービス（デモ）"
-        assert fields["1回の支払額（円） *"].value == "1000"
-        fields["定番サービスのプラン"].value = "1"
-        fields["定番サービスのプラン"].on_select(None)
-        assert fields["更新周期 *"].value == "yearly"
-        save = next(control for control in view.controls if isinstance(control, ft.Button) and control.content == "この内容で登録する")
-        fields["1回の支払額（円） *"].value = "-1"
-        await save.on_click(None)
-        assert fields["1回の支払額（円） *"].error and not saved
-        fields["1回の支払額（円） *"].value = "10000"
-        await save.on_click(None)
-        assert len(saved) == 1 and saved[0]["amount"] == 10000
-        assert not save.disabled and not fields["サービス名 *"].disabled
-    asyncio.run(scenario())
-
-
-def test_status_requires_confirmation_and_preserves_id(tmp_path):
-    async def scenario():
-        page = PageStub()
-        client = ApiClient(tmp_path / "records.json", use_dummy=True)
-        item = await client.create_subscription({"name": "試作", "plan_name": "月額", "amount": "1000",
-                    "cycle": "monthly", "status": "active", "joined_at": "2026-01-01T12:00"})
-        changed = []
-        view = status_actions(page, item, client, changed.append)
-        save = view.controls[-1]
-        await save.on_click(None)
-        assert not changed
-        check = next(control for control in view.controls if isinstance(control, ft.Checkbox))
-        check.value = True
-        await save.on_click(None)
-        assert changed[0]["status"] == "cancelled"
-        view = status_actions(page, changed[0], client, changed.append)
-        joined = next(control for control in view.controls if isinstance(control, ft.TextField))
-        joined.value = "invalid"
-        next(control for control in view.controls if isinstance(control, ft.Checkbox)).value = True
-        await view.controls[-1].on_click(None)
-        assert joined.error and len(changed) == 1
-        joined.value = "2026-10-05T12:00"
-        await view.controls[-1].on_click(None)
-        assert changed[-1]["status"] == "active" and changed[-1]["id"] == item["id"]
-    asyncio.run(scenario())
-
-
-def test_preview_and_icons_construct_with_pinned_flet(tmp_path):
-    page = PageStub()
-    item = {"id": "demo", "name": "試作", "plan_name": "月額", "amount": 1000,
-            "cycle": "monthly", "status": "active", "joined_at": "2026-01-01T12:00"}
-    assert isinstance(service_icon(item), ft.Container)
-    assert isinstance(service_icon({**item, "status": "trial"}), ft.Stack)
-    assert isinstance(service_icon({**item, "status": "cancelled", "icon": "https://example.com/icon.png"}), ft.Container)
-    assert preview_list(page, [item], "frequency", lambda e: None, lambda: None, lambda i: None)
-    assert preview_status(page, item, ApiClient(tmp_path / "records.json"), lambda: None, lambda i: None)
+loadSubscriptions().then((list) => {
+  subscriptions = list;
+  render();
+});
+</script>
+</body>
+</html>
 ```
 
 ## docs/register.html
@@ -1393,32 +817,3758 @@ if (typeof document !== 'undefined') initialize();
 </script>
 </body>
 </html>
-
 ```
 
-## repository/.gitignore
+## pyproject.toml
+
+```toml
+[project]
+name = "submane"
+version = "0.1.0"
+description = "サブスクリプション管理アプリ「サブマネ」"
+readme = "README.md"
+requires-python = ">=3.12"
+# アプリ(APK)に入るライブラリ。バージョンは全員そろえる。上げるときは全員で同時に。
+dependencies = [
+    "flet==1.0.4",
+    "flet-charts==1.0.4",   # 内訳画面の円グラフ
+    "httpx==0.28.1",        # APIの呼び出し
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli==1.0.4",
+    "flet-desktop==1.0.4",
+    "flet-web==1.0.4",
+    "fastapi==0.142.2",  # Flet Webで検証した互換バージョン
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.flet]
+org = "jp.e1"                 # 仮。パッケージ名の先頭になる
+product = "サブマネ"
+company = "Team E1"
+
+[tool.flet.app]
+path = "src"
+```
+
+## requirements.txt
 
 ```text
-# macOS
-.DS_Store
+# pip install -r requirements.txt で一括インストールできるようにしたもの。
+# 内容は pyproject.toml の dependencies / dependency-groups.dev と同じバージョンにそろえている。
+# バージョンを上げるときは pyproject.toml と両方を同時に直すこと(README 9章)。
 
-# Python
-__pycache__/
-*.pyc
-.venv/
+# --- アプリ本体(APKに入るもの) ---
+flet==1.0.4
+flet-charts==1.0.4   # 内訳画面の円グラフ
+httpx==0.28.1        # APIの呼び出し
 
-# Flet / Flutter build output
-build/
+# --- 開発・テスト用(APKには入らない) ---
+flet-cli==1.0.4
+flet-desktop==1.0.4
+flet-web==1.0.4
+pytest==9.1.1
 
-# Editor
-.vscode/
-.idea/
+# Flet WebのFastAPIラッパーと互換性のある検証済みバージョン
+fastapi==0.142.2
+```
 
-# ローカル作業・テスト生成物
-.pytest_cache/
-.reference/
-.tools/
-data/
-*.log
+## run.ps1
 
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath $PSScriptRoot
+& "$PSScriptRoot/.venv/Scripts/python.exe" "$PSScriptRoot/src/main.py" @args
+```
+
+## setup.ps1
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Location -LiteralPath $PSScriptRoot
+py -3.12 -m venv .venv
+if ($LASTEXITCODE -ne 0) { throw 'Python 3.12をインストールするか，既存の.venvを利用してください．' }
+& "$PSScriptRoot/.venv/Scripts/python.exe" -m pip install -r "$PSScriptRoot/requirements.txt"
+if ($LASTEXITCODE -ne 0) { throw '依存ライブラリのインストールに失敗しました．' }
+```
+
+## src/api_client.py
+
+```python
+import asyncio
+import copy
+import json
+import os
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from threading import RLock
+from uuid import uuid4
+from urllib.parse import quote
+import httpx
+import config
+from dummy_data import SERVICES
+from logic.api_contract import registration_payload, update_payload
+from logic.subscriptions import normalize_keyword, validate_subscription
+
+
+import dummy_data
+
+
+"""APIの呼び出しをまとめる。各画面はここの関数だけを使い、httpx を直接呼ばない。
+
+・config.USE_DUMMY_DATA が True の間は、APIを呼ばずに dummy_data.py の内容で動く
+  (登録・編集・削除もアプリを閉じるまでは反映される)
+・USE_DUMMY_DATA が False のときは、local_db.py(docs/local_db.md)に前回の取得結果を
+  キャッシュし、サーバに接続できないときはそのキャッシュを返す
+・失敗したときは ApiError(接続できないときは ApiError のサブクラス OfflineError)を送出する。
+  画面側で except ApiError して案内を表示する
+・APIの項目名とアプリ内の項目名が違う場合は、_to_app_subscription() / _to_api_subscription()
+  の中だけで変換する(画面は直さない)
+"""
+
+import copy
+from datetime import datetime
+from urllib.parse import urlparse
+
+import httpx
+
+import config
+import dummy_data
+import local_db
+
+
+class ApiError(RuntimeError):
+    """画面に表示できる保存・通信エラー．"""
+
+    def __init__(self, message, *, status_code=None, code=None, details=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.details = details if isinstance(details, dict) else {}
+
+
+class OfflineError(ApiError):
+    """オンライン専用の登録・更新を実行できない．"""
+
+
+
+
+
+# ------------------------------------------------------------------
+# APIのパス。mane_server/server_db_api.md §6 に合わせている
+# ------------------------------------------------------------------
+ENDPOINTS = {
+    "sign_up": "/api/v1/signup",
+    "log_in": "/api/v1/session",
+    "log_out": "/api/v1/session",
+    "me": "/api/v1/me",
+    "subscriptions": "/api/v1/subscriptions",
+    "subscription": "/api/v1/subscriptions/{sub_id}",
+    "services": "/api/v1/services",
+}
+
+# ------------------------------------------------------------------
+# 内部の状態
+# ------------------------------------------------------------------
+_client: httpx.Client | None = None  # ログイン状態(cookie)を保つため使い回す
+_logged_in = config.USE_DUMMY_DATA and config.DUMMY_START_LOGGED_IN
+_dummy_subs = copy.deepcopy(dummy_data.SUBSCRIPTIONS)
+_session_restored = False  # 起動後、保存していたCookieを一度だけ読み込んだか
+_HOST = urlparse(config.API_BASE_URL).hostname if config.API_BASE_URL else None
+
+
+def _http() -> httpx.Client:
+    """httpx のクライアントを返す。cookie を保持するので1つを使い回す。"""
+    global _client, _logged_in, _session_restored
+    if _client is None:
+        _client = httpx.Client(base_url=config.API_BASE_URL, timeout=config.REQUEST_TIMEOUT)
+    if not _session_restored:
+        _session_restored = True
+        cookie = local_db.get_state("session_cookie")
+        if cookie:
+            _client.cookies.set("session_id", cookie, domain=_HOST)
+            _logged_in = True
+    return _client
+
+
+def _save_session(email: str | None = None) -> None:
+    """ログイン・会員登録の直後: 受け取ったCookieと(あれば)メールアドレスを保存する。"""
+    cookie = _http().cookies.get("session_id")
+    if cookie:
+        local_db.set_state("session_cookie", cookie)
+    if email:
+        local_db.set_state("user_email", email)
+
+
+def _request(method: str, path: str, **kwargs):
+    """APIを呼び、JSONを返す。通信できなければ OfflineError、APIがエラーを返したら ApiError にそろえる。"""
+    global _logged_in
+    try:
+        response = _http().request(method, path, **kwargs)
+    except httpx.TimeoutException as err:
+        raise OfflineError("サーバからの応答がありません。時間をおいてもう一度お試しください。") from err
+    except httpx.HTTPError as err:
+        raise OfflineError("サーバに接続できません。通信環境を確認してください。") from err
+    if response.status_code == 401:
+        if path == ENDPOINTS["log_in"] and method == "POST":
+            # ログイン試行そのものの401は「session切れ」ではなくメール・パスワード不一致。
+            # サーバのメッセージ(doc §6.1)をそのまま使う。
+            raise ApiError(_error_message(response))
+        _logged_in = False
+        local_db.clear_user_data()
+        raise ApiError("ログインの有効期限が切れました。もう一度ログインしてください。")
+    if response.status_code == 404:
+        raise ApiError("データが見つかりません。")
+    if response.status_code >= 400:
+        try:
+            error = response.json().get("error", {})
+        except (ValueError, AttributeError):
+            error = {}
+        error = error if isinstance(error, dict) else {}
+        raise ApiError(_error_message(response), status_code=response.status_code,
+                       code=error.get("code"), details=error.get("details"))
+    if not response.content:
+        return None
+    try:
+        return response.json()
+    except ValueError as err:
+        raise ApiError("サーバから想定外の応答が返りました。") from err
+
+
+def _error_message(response: httpx.Response) -> str:
+    """{"error": {"message": ...}} の形(mane_server/server_db_api.md §5)ならその文言を使う。"""
+    try:
+        error = response.json().get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+    except ValueError:
+        message = None
+    return message or f"サーバでエラーが起きました(コード {response.status_code})。"
+
+
+def _to_app_subscription(data: dict) -> dict:
+    """APIのサブスク1件を、アプリ内で使う形にそろえる。
+
+    APIの項目名は trial_ends_at(s あり。mane_server/server_db_api.md §6.4)だが、
+    アプリ内では trial_end_at(s なし)で統一している。
+    """
+    return {
+        "id": data.get("id"),
+        "name": data.get("name", ""),
+        "icon": data.get("icon"),
+        "plan_name": data.get("plan_name", ""),
+        "cycle": data.get("cycle", "monthly"),
+        "amount": int(data.get("amount") or 0),
+        "joined_at": data.get("joined_at"),
+        "join_url": data.get("join_url", ""),
+        "cancel_url": data.get("cancel_url", ""),
+        "cancel_memo": data.get("cancel_memo", ""),
+        "status": data.get("status", "active"),
+        "trial_end_at": data.get("trial_ends_at"),
+        "trial_ends_at": data.get("trial_ends_at"),
+        **{key: data.get(key) for key in ("service_id", "plan_id", "created_at", "registered_at", "next_payment_at")},
+    }
+
+
+def _to_api_subscription(data: dict) -> dict:
+    """アプリ内のサブスク1件(フラットな形)を、APIが要求する形にする。
+
+    APIは「定番サービス参照(service_id)」と「カスタム入力(custom_name 等)」を
+    別の項目として持つが、アプリ内では区別せず1つの辞書にフラットに持っている。
+    data に無いキーは省く(PATCHでその項目に触れない、という意味になる)。
+    """
+    result = {}
+    for key in ("amount", "cycle", "plan_name", "joined_at", "status"):
+        if key in data:
+            result[key] = data[key]
+    if "trial_end_at" in data:
+        result["trial_ends_at"] = data["trial_end_at"] or None
+    if "trial_ends_at" in data:
+        result["trial_ends_at"] = data["trial_ends_at"] or None
+    if data.get("plan_id"):
+        result["plan_id"] = int(data["plan_id"])
+    if "service_id" in data:
+        service_id = data["service_id"]
+        if service_id:
+            result["service_id"] = int(service_id)
+        else:
+            result["custom_name"] = data.get("name", "")
+            result["custom_join_url"] = data.get("join_url", "")
+            result["custom_cancel_url"] = data.get("cancel_url", "")
+            result["custom_cancel_memo"] = data.get("cancel_memo", "")
+    return result
+
+
+def _find_dummy(sub_id) -> dict:
+    """ダミーデータから1件探す。なければ ApiError。"""
+    for sub in _dummy_subs:
+        if str(sub["id"]) == str(sub_id):
+            return sub
+    raise ApiError("データが見つかりません。")
+
+
+# ------------------------------------------------------------------
+# アカウント
+# ------------------------------------------------------------------
+def is_logged_in() -> bool:
+    """ログイン済みかどうかを返す。本物のAPIのときは、保存したCookieの有無も見る。"""
+    if not config.USE_DUMMY_DATA:
+        _http()  # 保存していたCookieをまだ読んでいなければここで読む
+    return _logged_in
+
+
+def sign_up(email: str, password: str) -> None:
+    """会員登録する。成功したらログイン済みになる。"""
+    global _logged_in
+    if not config.USE_DUMMY_DATA:
+        _request("POST", ENDPOINTS["sign_up"], json={"email": email, "password": password})
+        _save_session(email)
+        refresh_services()
+    else:
+        # 本物のAPIが無くてもメールアドレスは保存する(アカウント画面の表示用)。
+        local_db.set_state("user_email", email)
+    _logged_in = True
+
+
+def log_in(email: str, password: str) -> None:
+    """ログインする。"""
+    global _logged_in
+    if not config.USE_DUMMY_DATA:
+        _request("POST", ENDPOINTS["log_in"], json={"email": email, "password": password})
+        _save_session(email)
+        refresh_services()
+    else:
+        local_db.set_state("user_email", email)
+    _logged_in = True
+
+
+def log_out() -> None:
+    """ログアウトする。端末に残した前回のデータも消す。"""
+    global _logged_in
+    if not config.USE_DUMMY_DATA:
+        _request("DELETE", ENDPOINTS["log_out"])
+    _logged_in = False
+    local_db.clear_user_data()
+
+
+# ------------------------------------------------------------------
+# サブスク
+# ------------------------------------------------------------------
+def list_subscriptions() -> list[dict]:
+    """自分のサブスク一覧を登録順で返す。通信できなければ前回取得した一覧を返す。"""
+    if config.USE_DUMMY_DATA:
+        return copy.deepcopy(_dummy_subs)
+    try:
+        response = _request("GET", ENDPOINTS["subscriptions"]) or {}
+        items = [_to_app_subscription(item) for item in response.get("subscriptions", [])]
+    except OfflineError:
+        cached = local_db.load_subscriptions()
+        if not cached:
+            raise
+        return cached
+    local_db.replace_subscriptions(items, datetime.now().astimezone().isoformat())
+    return items
+
+
+def get_subscription(sub_id) -> dict:
+    """サブスクを1件返す。通信できなければ前回取得した内容を返す。"""
+    if config.USE_DUMMY_DATA:
+        return copy.deepcopy(_find_dummy(sub_id))
+    try:
+        item = _to_app_subscription(_request("GET", ENDPOINTS["subscription"].format(sub_id=sub_id)))
+    except OfflineError:
+        cached = local_db.load_subscription(sub_id)
+        if cached is None:
+            raise
+        return cached
+    local_db.upsert_subscription(item)
+    return item
+
+
+def create_subscription(data: dict) -> dict:
+    """サブスクを登録し、登録された1件を返す。通信できないときはそのまま失敗する(あとで送る仕組みは作らない)。"""
+    if config.USE_DUMMY_DATA:
+        new_id = max((sub["id"] for sub in _dummy_subs), default=0) + 1
+        sub = _to_app_subscription({**data, "id": new_id})
+        _dummy_subs.append(sub)
+        return copy.deepcopy(sub)
+    item = _to_app_subscription(_request("POST", ENDPOINTS["subscriptions"], json={key: value for key, value in _to_api_subscription(data).items() if key != "status"}))
+    local_db.upsert_subscription(item)
+    return item
+
+
+def update_subscription(sub_id, data: dict) -> dict:
+    """サブスクを編集し、更新後の1件を返す。解約・再契約は data に status を入れる。"""
+    if config.USE_DUMMY_DATA:
+        sub = _find_dummy(sub_id)
+        sub.update({key: value for key, value in data.items() if key != "id"})
+        return copy.deepcopy(sub)
+    path = ENDPOINTS["subscription"].format(sub_id=sub_id)
+    item = _to_app_subscription(_request("PATCH", path, json=_to_api_subscription(data)))
+    local_db.upsert_subscription(item)
+    return item
+
+
+def delete_subscription(sub_id) -> None:
+    """サブスクを削除する。"""
+    if config.USE_DUMMY_DATA:
+        _dummy_subs.remove(_find_dummy(sub_id))
+        return
+    _request("DELETE", ENDPOINTS["subscription"].format(sub_id=sub_id))
+    local_db.delete_subscription(sub_id)
+
+
+# ------------------------------------------------------------------
+# 定番サービス
+# ------------------------------------------------------------------
+def refresh_services() -> None:
+    """定番サービスのマスタを取得し直し、オフライン検索用に保存する(ログイン直後に呼ぶ)。"""
+    if config.USE_DUMMY_DATA:
+        return
+    try:
+        services = (_request("GET", ENDPOINTS["services"]) or {}).get("services", [])
+    except OfflineError:
+        return
+    local_db.replace_services(services)
+
+
+def search_services(keyword: str) -> list[dict]:
+    """定番サービスを名称で検索する。keyword が空なら全件。通信できなければ前回のマスタから探す。"""
+    if config.USE_DUMMY_DATA:
+        word = (keyword or "").strip().lower()
+        return [copy.deepcopy(s) for s in dummy_data.SERVICES if word in s["name"].lower()]
+    try:
+        return (_request("GET", ENDPOINTS["services"], params={"q": keyword}) or {}).get("services", [])
+    except OfflineError:
+        return local_db.search_services(keyword or "")
+
+
+def icon_url(icon: str | None) -> str | None:
+    """アイコンのURLを返す。APIが / から始まるパスを返した場合はAPIのURLを前に付ける。"""
+    if not icon:
+        return None
+    if icon.startswith("/"):
+        return config.API_BASE_URL + icon
+    return icon
+
+
+# ------------------------------------------------------------------
+# 端末ごとの設定(ログアウトしても残る)
+# ------------------------------------------------------------------
+def get_yearly_mode() -> str:
+    """年額プランの計上方法("billing"=更新月に全額 / "average"=月割り)。内訳画面が使う。"""
+    return local_db.get_state("yearly_mode", "billing")
+
+
+def set_yearly_mode(mode: str) -> None:
+    """年額プランの計上方法を端末に保存する。"""
+    local_db.set_state("yearly_mode", mode)
+
+
+def last_updated() -> str | None:
+    """前回 list_subscriptions() でサーバから取得できた時刻(ISO文字列)。取得したことがなければ None。"""
+    return local_db.get_state("subscriptions_fetched_at")
+
+
+def get_user_email() -> str | None:
+    """ログイン中のメールアドレスを返す(会員登録・ログインの直後に保存したもの)。
+
+    ダミーデータのまま(signup/log_in を呼んでいない)場合は None。
+    """
+    return local_db.get_state("user_email")
+
+
+# 旧単独試作の互換クライアント．共通画面ではモジュール関数を利用する．
+class ApiClient:
+    """asyncメソッドで画面を止めずに保存や通信を行う．"""
+
+    def __init__(self, data_file=None, use_dummy=None, base_url=None, http_session=None):
+        self.data_file = Path(data_file or Path(__file__).resolve().parents[1] / "data" / "subscriptions.json")
+        self.use_dummy = config.USE_DUMMY_DATA if use_dummy is None else use_dummy
+        self.base_url = config.API_BASE_URL if base_url is None else base_url
+        self._http_session = http_session
+        self._owns_session = http_session is None
+        self._lock = RLock()
+
+    def http_session(self):
+        """ログイン担当と共有するCookie保持用のHTTPセッションを返す．"""
+        if not self.base_url:
+            raise ApiError("APIのURLが未設定です．")
+        if self._http_session is None or self._http_session.is_closed:
+            self._http_session = httpx.AsyncClient(base_url=self.base_url.rstrip("/") + "/", timeout=15)
+            self._owns_session = True
+        return self._http_session
+
+    async def aclose(self):
+        """このクライアントが所有する通信セッションを終了する．"""
+        if self._owns_session and self._http_session is not None:
+            await self._http_session.aclose()
+
+    async def _request(self, method, path, **kwargs):
+        """APIエラーと不正なJSONを利用者向けのエラーに変換する．"""
+        if not self.base_url:
+            raise ApiError("APIのURLが未設定です．")
+        try:
+            response = await self.http_session().request(method, path, **kwargs)
+            response.raise_for_status()
+            return response.json() if response.content else None
+        except httpx.HTTPStatusError as error:
+            message = "ログイン状態を確認してください．" if error.response.status_code in (401, 403) else "保存・取得に失敗しました．時間をおいて再試行してください．"
+            try:
+                body = error.response.json().get("error", {})
+            except (ValueError, AttributeError):
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            raise ApiError(body.get("message") or message,
+                           status_code=error.response.status_code,
+                           code=body.get("code"), details=body.get("details")) from error
+        except httpx.HTTPError as error:
+            raise OfflineError("通信できません．接続後に再試行してください．送信の自動再試行は行いません．") from error
+        except ValueError as error:
+            raise ApiError("通信できませんでした．接続先とネットワークを確認してください．") from error
+
+    def _read(self):
+        """壊れたファイルを空データで上書きせず，エラーとして扱う．"""
+        if not self.data_file.exists():
+            return []
+        try:
+            values = json.loads(self.data_file.read_text(encoding="utf-8"))
+            if not isinstance(values, list) or any(not isinstance(value, dict) or "id" not in value for value in values):
+                raise ValueError("Invalid records")
+            return values
+        except (OSError, ValueError) as error:
+            raise ApiError("保存データを読み取れません．JSONファイルを確認してください．") from error
+
+    def _write(self, items):
+        """一時ファイルから置換し，途中で保存が失敗しても元データを残す．"""
+        temporary = None
+        try:
+            self.data_file.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.data_file.parent, delete=False) as output:
+                temporary = output.name
+                json.dump(items, output, ensure_ascii=False, indent=2)
+            os.replace(temporary, self.data_file)
+        except OSError as error:
+            raise ApiError("保存できません．フォルダの書き込み権限を確認してください．") from error
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _local(self, operation, sub_id=None, data=None):
+        """単一プロセス内の読み書きをロックして処理する．"""
+        with self._lock:
+            items = self._read()
+            if operation == "list":
+                return copy.deepcopy(items)
+            if operation == "create":
+                item = {**data, "id": uuid4().hex,
+                        "registered_at": datetime.now().astimezone().isoformat(), "next_payment_at": None}
+                items.append(item)
+            else:
+                item = next((value for value in items if value["id"] == sub_id), None)
+                if item is None:
+                    raise ApiError("このサブスクは見つかりません．一覧を更新してください．")
+                if operation == "get":
+                    return copy.deepcopy(item)
+                validated = validate_subscription({**item, **data})
+                item.update(validated)
+                if data.get("status") in {"active", "cancelled"}:
+                    item["next_payment_at"] = None
+                    item["trial_ends_at"] = ""
+                for key in ("next_payment_at",):
+                    if key in data:
+                        item[key] = data[key]
+            self._write(items)
+            return copy.deepcopy(item)
+
+    async def search_services(self, keyword=""):
+        """定番サービスを検索する．ローカルの結果はコピーして返す．"""
+        if not self.use_dummy:
+            result = await self._request("GET", "services", params={"q": keyword})
+            result = result.get("services") if isinstance(result, dict) else result
+            if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
+                raise ApiError("サービス検索の応答形式が想定と異なります．")
+            return result
+        query = normalize_keyword(keyword)
+        return copy.deepcopy([service for service in SERVICES if query in normalize_keyword(
+            " ".join([service["name"], *service.get("aliases", [])]))])
+
+    async def list_subscriptions(self):
+        """登録済みの一覧を返す．"""
+        if self.use_dummy:
+            return await asyncio.to_thread(self._local, "list")
+        result = await self._request("GET", "subscriptions")
+        result = result.get("subscriptions") if isinstance(result, dict) else result
+        if not isinstance(result, list) or any(not isinstance(item, dict) for item in result):
+            raise ApiError("一覧の応答形式が想定と異なります．")
+        return result
+
+    async def get_subscription(self, sub_id):
+        """一件のサブスクを返す．"""
+        if self.use_dummy:
+            return await asyncio.to_thread(self._local, "get", sub_id)
+        return await self._request("GET", "subscriptions/" + quote(str(sub_id), safe=""))
+
+    async def create_subscription(self, data):
+        """検証済みのサブスクを作成する．"""
+        data = validate_subscription(data)
+        if self.use_dummy:
+            return await asyncio.to_thread(self._local, "create", data=data)
+        if data["status"] == "cancelled":
+            raise ApiError("登録時は契約中またはトライアル中を選択してください．解約は詳細画面で記録します．")
+        try:
+            payload = registration_payload(data)
+        except (ValueError, TypeError) as error:
+            raise ApiError("サービスまたはプランのIDが不正です．定番サービスを再選択してください．") from error
+        return await self._request("POST", "subscriptions", json=payload)
+
+    async def update_subscription(self, sub_id, data):
+        """登録済みサブスクを部分更新する．"""
+        if self.use_dummy:
+            return await asyncio.to_thread(self._local, "update", sub_id, data)
+        return await self._request("PATCH", "subscriptions/" + quote(str(sub_id), safe=""), json=update_payload(data))
+```
+
+## src/components/__init__.py
+
+```python
+"""チームの画面で再利用する石井担当部品．"""
+```
+
+## src/components/app_header.py
+
+```python
+"""画面幅を取りすぎない共通ヘッダー．追加操作はホームの主操作にまとめる．"""
+import flet as ft
+import navigation
+import theme
+
+
+def app_header(page, title=None, show_back=False, show_actions=True):
+    controls = []
+    if show_back:
+        controls.append(ft.IconButton(icon=ft.Icons.ARROW_BACK_ROUNDED,
+            width=44, height=44, icon_color=theme.INK, tooltip='戻る',
+            on_click=lambda e: navigation.go_back(page)))
+    else:
+        controls.append(ft.Container(width=34, height=34, border_radius=11, bgcolor=theme.ACCENT,
+            alignment=ft.Alignment.CENTER,
+            content=ft.Icon(ft.Icons.SUBSCRIPTIONS_OUTLINED, color=theme.ON_ACCENT, size=19)))
+    controls.append(theme.text(title or 'サブマネ', size=18 if title else 21, weight='bold',
+        expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
+    if show_actions:
+        controls.append(ft.IconButton(icon=ft.Icons.PERSON_OUTLINE_ROUNDED, icon_color=theme.INK,
+            width=44, height=44, tooltip='アカウント', bgcolor=theme.SURFACE,
+            on_click=lambda e: navigation.go(page, navigation.ACCOUNT)))
+    return ft.Container(bgcolor=theme.GROUND,
+        padding=ft.Padding.only(left=8 if show_back else 16, right=16, top=8, bottom=4),
+        content=ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=controls))
+```
+
+## src/components/feedback.py
+
+```python
+"""データが0件のとき、通信に失敗したときなどの案内表示。"""
+
+import flet as ft
+
+import navigation
+import theme
+
+
+def primary_button(label: str, on_click, icon=None) -> ft.Control:
+    """主要な操作のボタン(緑の塗り)。"""
+    return ft.FilledButton(
+        content=label,
+        icon=icon,
+        height=theme.TAP_MIN,
+        bgcolor=theme.ACCENT,
+        color=theme.ON_ACCENT,
+        icon_color=theme.ON_ACCENT,
+        style=ft.ButtonStyle(text_style=ft.TextStyle(font_family=theme.FONT_BOLD, size=14)),
+        on_click=on_click,
+    )
+
+
+def message_panel(message: str, icon=None, button_label: str | None = None, on_click=None, color: str = theme.INK_SUB) -> ft.Control:
+    """中央寄せの案内文(+ ボタン)を返す。"""
+    controls = []
+    if icon:
+        controls.append(ft.Icon(icon, size=40, color=color))
+    controls.append(theme.text(message, size=14, color=theme.INK_SUB, text_align=ft.TextAlign.CENTER))
+    if button_label and on_click:
+        controls.append(primary_button(button_label, on_click))
+    return ft.Container(
+        padding=ft.Padding.symmetric(horizontal=theme.GUTTER, vertical=48),
+        alignment=ft.Alignment.CENTER,
+        content=ft.Column(
+            controls=controls,
+            spacing=20,
+            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+    )
+
+
+def error_panel(page: ft.Page, message: str) -> ft.Control:
+    """通信エラーなどの案内と「もう一度読み込む」ボタンを返す。"""
+    return message_panel(
+        message,
+        icon=ft.Icons.ERROR_OUTLINE,
+        button_label="もう一度読み込む",
+        on_click=lambda e: navigation.reload(page),
+        color=theme.DANGER,
+    )
+```
+
+## src/components/service_icon.py
+
+```python
+"""ロゴの全体と色を保ち，契約状態は外側のバッジで表示する．"""
+from zlib import crc32
+import flet as ft
+import api_client
+import theme
+from service_assets import bundled_icon
+
+BADGE_SIZE = 24
+BADGE_OVERHANG = 6
+
+
+def footprint(size=72):
+    return size + BADGE_OVERHANG, size + BADGE_OVERHANG
+
+
+def service_icon(sub, size=72, color_index=None, ring_color=theme.GROUND):
+    """API画像を優先し，通信失敗時も同梱ロゴか頭文字を表示する．"""
+    cancelled = sub.get('status') == 'cancelled'
+    trial = sub.get('status') == 'trial'
+    name = sub.get('name') or '?'
+    if color_index is None:
+        color_index = crc32(str(sub.get('id') or name).encode('utf-8'))
+    letter = ft.Container(width=size, height=size, border_radius=18,
+        bgcolor=theme.tile_color(color_index), alignment=ft.Alignment.CENTER,
+        content=theme.text(name[0], size=round(size * .4), weight='bold', color=theme.ON_ACCENT))
+    local = bundled_icon(sub)
+    local_image = ft.Image(src=local, width=size - 12, height=size - 12,
+                          fit=ft.BoxFit.CONTAIN, error_content=letter) if local else letter
+    remote = sub.get('icon')
+    # ダミー中はサーバ不要で使える同梱画像を優先する．
+    import config
+    if remote and not (config.USE_DUMMY_DATA and local):
+        image = ft.Image(src=api_client.icon_url(remote), width=size - 12, height=size - 12,
+                         fit=ft.BoxFit.CONTAIN, error_content=local_image)
+    else:
+        image = local_image
+    tile = ft.Container(width=size, height=size, bgcolor=theme.SURFACE,
+        border_radius=18, border=ft.Border.all(1, theme.LINE), alignment=ft.Alignment.CENTER,
+        content=image, tooltip=name)
+    controls = [tile]
+    if trial or cancelled:
+        controls.append(ft.Container(width=BADGE_SIZE, height=BADGE_SIZE, right=0, bottom=0,
+            bgcolor=theme.OFF_INK if cancelled else theme.TRIAL,
+            border_radius=12, border=ft.Border.all(2, ring_color), alignment=ft.Alignment.CENTER,
+            content=ft.Icon(ft.Icons.CHECK if cancelled else ft.Icons.ACCESS_TIME,
+                            size=13, color=theme.ON_ACCENT)))
+    width, height = footprint(size)
+    return ft.Stack(width=width, height=height, controls=controls)
+
+
+def status_label(sub):
+    return {'trial': '無料トライアル中', 'cancelled': '解約済み'}.get(sub.get('status'), '')
+```
+
+## src/components/status_actions.py
+
+```python
+"""詳細画面に組み込む解約・再契約の状態変更部品．"""
+from datetime import datetime
+import inspect
+import flet as ft
+import theme
+from api_client import ApiError
+from logic.api_bridge import call_api
+from logic.subscriptions import JST, ValidationError, cancellation_patch, reactivation_patch, valid_url
+
+
+def status_actions(page, subscription, api, on_changed):
+    """公式サイトを開く操作と，手続き後の記録を別の操作として提供する．"""
+    cancelled = subscription.get("status") == "cancelled"
+    url = subscription.get("join_url" if cancelled else "cancel_url", "")
+    label = "入会サイトを開く" if cancelled else "退会サイトを開く"
+    error_text = ft.Text("", color=theme.ERROR)
+    new_joined = ft.TextField(label="再契約の入会日時（日本時間）",
+                             value=datetime.now(JST).strftime("%Y-%m-%dT%H:%M"),
+                             visible=cancelled)
+    confirm = ft.Checkbox(label="公式サイトで手続きを完了しました", value=False)
+    busy = {"value": False, "completed": False}
+
+    async def change_status(event):
+        """手続き完了確認後に保存し，成功した場合だけ一覧を更新する．"""
+        if busy["value"] or busy["completed"]:
+            return
+        if not confirm.value:
+            error_text.value = "公式サイトでの手続き完了を確認してください．"
+            page.update()
+            return
+        new_joined.error = None
+        try:
+            patch = reactivation_patch(subscription, new_joined.value) if cancelled else cancellation_patch()
+        except ValidationError as error:
+            new_joined.error = error.errors.get("joined_at")
+            page.update()
+            return
+        busy["value"] = True
+        save.disabled = True
+        new_joined.disabled = True
+        confirm.disabled = True
+        error_text.value = ""
+        page.update()
+        try:
+            item = await call_api(api, "update_subscription", subscription["id"], patch)
+        except ApiError as error:
+            error_text.value = str(error)
+        else:
+            busy["completed"] = True
+            result = on_changed(item)
+            if inspect.isawaitable(result):
+                await result
+        finally:
+            busy["value"] = False
+            save.disabled = busy["completed"]
+            new_joined.disabled = False
+            confirm.disabled = False
+            page.update()
+
+    save = ft.Button("再契約済みとして記録" if cancelled else "解約済みとして記録",
+                     bgcolor=theme.ACCENT, color=theme.SURFACE, height=48, on_click=change_status)
+    return ft.Column(spacing=12, controls=[
+        ft.Text("再契約する" if cancelled else "解約する", size=20, weight=ft.FontWeight.BOLD),
+        ft.Text("公式サイトで手続きを済ませた後，契約状態を更新してください．", color=theme.INK_SUB),
+        ft.Button(label, url=url if url and valid_url(url) else None,
+                  disabled=not bool(url and valid_url(url)), height=44, icon=ft.Icons.OPEN_IN_NEW),
+        ft.Text("URLが未登録です．公式サイトで手続きしてください．", visible=not bool(url), color=theme.INK_SUB),
+        new_joined, confirm, error_text, save,
+    ])
+```
+
+## src/components/tab_bar.py
+
+```python
+"""下部タブ(ホーム / 内訳 / 期限)。"""
+
+import flet as ft
+
+import navigation
+import theme
+
+TABS = [
+    (navigation.HOME, "ホーム", ft.Icons.GRID_VIEW_ROUNDED),
+    (navigation.BREAKDOWN, "内訳", ft.Icons.PIE_CHART_OUTLINE),
+    (navigation.DEADLINE, "期限", ft.Icons.EVENT_OUTLINED),
+]
+
+
+def _tab(page: ft.Page, route: str, label: str, icon, selected: bool) -> ft.Control:
+    """タブ1つ分を返す。"""
+    color = theme.ACCENT if selected else theme.INK_SUB
+    return ft.Container(
+        expand=True,
+        height=56,
+        on_click=lambda e: navigation.go(page, route),
+        content=ft.Column(
+            spacing=2,
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Container(
+                    width=56,
+                    height=30,
+                    border_radius=15,
+                    bgcolor=theme.ACCENT_SOFT if selected else None,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Icon(icon, size=20, color=color),
+                ),
+                theme.text(label, size=11, weight="bold" if selected else "regular", color=color),
+            ],
+        ),
+    )
+
+
+def tab_bar(page: ft.Page, current_route: str | None) -> ft.Control:
+    """下部タブを返す(main.py が全画面に付ける)。current_route のタブを選択中にする。"""
+    return ft.Container(
+        bgcolor=theme.SURFACE,
+        border=ft.Border.only(top=ft.BorderSide(1, theme.LINE)),
+        padding=ft.Padding.only(left=theme.GUTTER, right=theme.GUTTER, top=8, bottom=8),
+        content=ft.Row(
+            spacing=8,
+            controls=[_tab(page, route, label, icon, route == current_route) for route, label, icon in TABS],
+        ),
+    )
+```
+
+## src/config.py
+
+```python
+"""アプリ全体の設定。APIのURLなどはここだけで管理する。"""
+
+# True の間はAPIを呼ばず、dummy_data.py の内容で動く
+import os
+
+USE_DUMMY_DATA = os.getenv("SUBMANE_USE_DUMMY_DATA", "true").lower() == "true"
+
+# APIができたら設定する(末尾の / は付けない)
+API_BASE_URL = os.getenv("SUBMANE_API_BASE_URL", "https://<APIのURL>").rstrip("/")
+
+# APIの応答を待つ秒数
+REQUEST_TIMEOUT = 10.0
+
+# ダミーデータで動かすとき、最初からログイン済みとして扱うか
+# (False にすると起動時に会員登録・ログイン画面が出る)
+DUMMY_START_LOGGED_IN = True
+```
+
+## src/dummy_data.py
+
+```python
+"""APIができるまで使うダミーデータ。
+
+金額・日時・URLはすべて動作確認用の仮の値で、実際のサービスの料金やURLではない。
+項目は README 5章「アプリが必要とするサブスク1件のデータ」に合わせている
+(+ 無料トライアルの終了日時 trial_end_at)。
+"""
+
+
+from service_assets import bundled_icon
+
+
+def _sub(sub_id, name, cycle, amount, joined_at, status="active", trial_end_at=None, plan_name=None):
+    """ダミーのサブスク1件を作る。"""
+    slug = f"service-{sub_id}"
+    return {
+        "id": sub_id,
+        "name": name,
+        "icon": bundled_icon({"name": name}),  # 授業用モックでも同梱画像を表示
+        "plan_name": plan_name or ("月額プラン" if cycle == "monthly" else "年額プラン"),
+        "cycle": cycle,
+        "amount": amount,
+        "joined_at": joined_at,
+        "join_url": f"https://example.com/{slug}/join",
+        "cancel_url": f"https://example.com/{slug}/cancel",
+        "cancel_memo": "退会手続きにはログイン用のメールアドレスとパスワードの準備が必要です。",
+        "status": status,
+        "trial_end_at": trial_end_at,
+    }
+
+
+SUBSCRIPTIONS = [
+    _sub(1, "Netflix", "monthly", 1500, "2025-04-12T20:15"),
+    _sub(2, "Spotify", "monthly", 1000, "2024-11-03T08:40"),
+    _sub(3, "Audible", "monthly", 1500, "2025-01-20T22:05", status="cancelled"),
+    _sub(4, "U-NEXT", "monthly", 2200, "2026-09-20T21:00", status="trial", trial_end_at="2026-10-20T21:00"),
+    _sub(5, "Amazonプライム", "yearly", 6000, "2023-10-18T12:30"),
+    _sub(6, "YouTube Premium", "monthly", 1300, "2025-07-01T19:00"),
+    _sub(7, "Disney+", "monthly", 1100, "2025-12-24T10:00"),
+    _sub(8, "FODプレミアム", "monthly", 1000, "2025-03-08T23:10", status="cancelled"),
+    _sub(9, "DAZN", "monthly", 4200, "2026-02-14T18:45"),
+    _sub(10, "Apple Music", "monthly", 1100, "2024-06-30T09:20"),
+    _sub(11, "Adobe CC", "yearly", 86000, "2025-11-05T14:00"),
+    _sub(12, "Hulu", "monthly", 1000, "2026-01-31T21:30"),
+    _sub(13, "Kindle Unlimited", "monthly", 1000, "2026-09-28T07:50", status="trial", trial_end_at="2026-10-28T07:50"),
+    _sub(14, "Lemino", "monthly", 1000, "2025-05-17T16:25", status="cancelled"),
+    _sub(15, "ABEMAプレミアム", "monthly", 1100, "2026-03-22T22:00"),
+    _sub(16, "iCloud+", "monthly", 400, "2023-08-09T11:11", plan_name="200GB"),
+    _sub(17, "dアニメストア", "monthly", 600, "2026-04-06T00:30"),
+    _sub(18, "NHKオンデマンド", "monthly", 1000, "2025-08-15T13:00", status="cancelled"),
+]
+
+# 定番サービスのマスタ(名称検索用)。
+# 既存のダミー契約から作る分(1件プラン)に加え、料金プランが複数ある例として
+# 石井担当が作成したデモサービス(複数プランの選択UI確認用)もそのまま載せている。
+SERVICES = [
+    {
+        "id": sub["id"],
+        "name": sub["name"],
+        "icon": sub["icon"],
+        "join_url": sub["join_url"],
+        "cancel_url": sub["cancel_url"],
+        "cancel_memo": sub["cancel_memo"],
+        "plans": [{"name": sub["plan_name"], "cycle": sub["cycle"], "amount": sub["amount"]}],
+    }
+    for sub in SUBSCRIPTIONS
+] + [
+    {"id": "video-demo", "name": "動画サービス（デモ）",
+     "join_url": "https://example.com/video/join", "cancel_url": "https://example.com/video/cancel",
+     "cancel_memo": "退会手続きにはメールアドレスとパスワードの準備が必要です．",
+     "plans": [{"name": "月額プラン（デモ）", "cycle": "monthly", "amount": 1000},
+               {"name": "年額プラン（デモ）", "cycle": "yearly", "amount": 10000}]},
+    {"id": "music-demo", "name": "音楽サービス（デモ）",
+     "join_url": "https://example.com/music/join", "cancel_url": "https://example.com/music/cancel",
+     "cancel_memo": "契約した窓口を確認してください．",
+     "plans": [{"name": "個人プラン（デモ）", "cycle": "monthly", "amount": 800}]},
+    {"id": "book-demo", "name": "読書サービス（デモ）",
+     "join_url": "https://example.com/book/join", "cancel_url": "https://example.com/book/cancel",
+     "cancel_memo": "パスワードの準備が必要です．",
+     "plans": [{"name": "月額プラン（デモ）", "cycle": "monthly", "amount": 500}]},
+]
+```
+
+## src/local_db.py
+
+```python
+"""端末内の SQLite(ログイン状態・設定・前回取得したデータのキャッシュ)。
+
+docs/local_db.md(元の設計: docs/client_db.md)の実装。呼ぶのは api_client.py だけにし、
+画面(views/)からは直接使わない。
+"""
+
+import json
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+_db_path: Path | None = None
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS subscriptions_cache (
+  id INTEGER PRIMARY KEY, position INTEGER NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS services_cache (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_kana TEXT, data TEXT NOT NULL);
+"""
+
+# ログアウトしても残すキー(端末の設定)
+_KEEP_ON_LOGOUT = {"yearly_mode"}
+
+
+def _default_path() -> Path:
+    """DBファイルの場所を決める。"""
+    base = os.getenv("FLET_APP_STORAGE_DATA")
+    folder = Path(base) if base else Path.home() / ".submane"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "submane.db"
+
+
+def init_db(path: Path | None = None) -> None:
+    """起動時に1回呼ぶ。テストでは一時ファイルのパスを渡す。"""
+    global _db_path
+    _db_path = path or _default_path()
+    with closing(sqlite3.connect(_db_path)) as con, con:
+        version = con.execute("PRAGMA user_version").fetchone()[0]
+        if version != SCHEMA_VERSION:
+            # キャッシュなので、版が変わったら作り直す(設定は消える)
+            for table in ("app_state", "subscriptions_cache", "services_cache"):
+                con.execute(f"DROP TABLE IF EXISTS {table}")
+        con.executescript(_SCHEMA)
+        con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _connect() -> sqlite3.Connection:
+    """呼ぶたびに新しい接続を開く(スレッドをまたいで使い回さない)。"""
+    if _db_path is None:
+        raise RuntimeError("init_db() を先に呼んでください")
+    con = sqlite3.connect(_db_path)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+# ---------- ログイン状態・設定 ----------
+
+def get_state(key: str, default: str | None = None) -> str | None:
+    """app_state から値を読む。"""
+    with closing(_connect()) as con:
+        row = con.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_state(key: str, value: str | None) -> None:
+    """app_state に値を書く。None なら削除。"""
+    with closing(_connect()) as con, con:
+        if value is None:
+            con.execute("DELETE FROM app_state WHERE key = ?", (key,))
+        else:
+            con.execute(
+                "INSERT INTO app_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+
+def clear_user_data() -> None:
+    """ログアウト・401 のときに呼ぶ。設定以外をすべて消す。"""
+    keep = ",".join("?" * len(_KEEP_ON_LOGOUT))
+    with closing(_connect()) as con, con:
+        con.execute(f"DELETE FROM app_state WHERE key NOT IN ({keep})", tuple(_KEEP_ON_LOGOUT))
+        con.execute("DELETE FROM subscriptions_cache")
+        con.execute("DELETE FROM services_cache")
+
+
+# ---------- 契約 ----------
+
+def replace_subscriptions(items: list[dict], fetched_at: str) -> None:
+    """一覧を丸ごと置き換える(GET /subscriptions の結果)。"""
+    with closing(_connect()) as con, con:
+        con.execute("DELETE FROM subscriptions_cache")
+        con.executemany(
+            "INSERT INTO subscriptions_cache (id, position, status, data) VALUES (?, ?, ?, ?)",
+            [(s["id"], i, s["status"], json.dumps(s, ensure_ascii=False))
+             for i, s in enumerate(items)],
+        )
+        # set_state() は別接続を開くため、同じトランザクション内では直接書く
+        con.execute(
+            "INSERT INTO app_state (key, value) VALUES ('subscriptions_fetched_at', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (fetched_at,),
+        )
+
+
+def upsert_subscription(item: dict) -> None:
+    """登録・編集が成功したあと、その1件だけ反映する。"""
+    with closing(_connect()) as con, con:
+        row = con.execute("SELECT position FROM subscriptions_cache WHERE id = ?", (item["id"],)).fetchone()
+        if row:
+            position = row["position"]
+        else:
+            position = con.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM subscriptions_cache").fetchone()[0]
+        con.execute(
+            "INSERT OR REPLACE INTO subscriptions_cache (id, position, status, data) VALUES (?, ?, ?, ?)",
+            (item["id"], position, item["status"], json.dumps(item, ensure_ascii=False)),
+        )
+
+
+def delete_subscription(sub_id) -> None:
+    """削除が成功したあと、その1件を消す。"""
+    with closing(_connect()) as con, con:
+        con.execute("DELETE FROM subscriptions_cache WHERE id = ?", (sub_id,))
+
+
+def load_subscriptions() -> list[dict]:
+    """前回取得した一覧(登録順)。"""
+    with closing(_connect()) as con:
+        rows = con.execute("SELECT data FROM subscriptions_cache ORDER BY position").fetchall()
+    return [json.loads(r["data"]) for r in rows]
+
+
+def load_subscription(sub_id) -> dict | None:
+    """前回取得した1件。"""
+    with closing(_connect()) as con:
+        row = con.execute("SELECT data FROM subscriptions_cache WHERE id = ?", (sub_id,)).fetchone()
+    return json.loads(row["data"]) if row else None
+
+
+# ---------- 定番サービス ----------
+
+def replace_services(items: list[dict]) -> None:
+    """マスタを丸ごと置き換える(GET /services の q なしの結果)。"""
+    with closing(_connect()) as con, con:
+        con.execute("DELETE FROM services_cache")
+        con.executemany(
+            "INSERT INTO services_cache (id, name, name_kana, data) VALUES (?, ?, ?, ?)",
+            [(s["id"], s["name"], s.get("name_kana"), json.dumps(s, ensure_ascii=False)) for s in items],
+        )
+
+
+def search_services(keyword: str) -> list[dict]:
+    """オフライン時の名称検索(名前・読みの部分一致)。"""
+    like = f"%{keyword}%"
+    with closing(_connect()) as con:
+        rows = con.execute(
+            "SELECT data FROM services_cache WHERE name LIKE ? OR name_kana LIKE ? ORDER BY name",
+            (like, like),
+        ).fetchall()
+    return [json.loads(r["data"]) for r in rows]
+```
+
+## src/logic/__init__.py
+
+```python
+"""石井担当の入力検証，並び替え，状態変更．"""
+```
+
+## src/logic/api_bridge.py
+
+```python
+"""共通の同期APIと担当画面のasyncイベントを接続する．"""
+import asyncio
+import inspect
+
+
+async def call_api(api, method, *args):
+    function = getattr(api, method)
+    if inspect.iscoroutinefunction(function):
+        return await function(*args)
+    return await asyncio.to_thread(function, *args)
+```
+
+## src/logic/api_contract.py
+
+```python
+"""サーバ設計書v0.2の登録・状態変更リクエストへの変換．"""
+from logic.subscriptions import parse_time
+
+
+def registration_payload(data):
+    """画面表示用の項目とAPIが計算する項目を送信しない．"""
+    result = {key: data[key] for key in ("plan_name", "amount", "cycle")}
+    result["joined_at"] = parse_time(data["joined_at"]).isoformat(timespec="minutes")
+    if data.get("service_id"):
+        result["service_id"] = int(data["service_id"])
+        if data.get("plan_id"):
+            result["plan_id"] = int(data["plan_id"])
+    else:
+        result.update({"custom_name": data["name"],
+                       "custom_join_url": data.get("join_url") or None,
+                       "custom_cancel_url": data.get("cancel_url") or None,
+                       "custom_cancel_memo": data.get("cancel_memo") or None})
+    if data.get("status") == "trial":
+        result["trial_ends_at"] = parse_time(data["trial_ends_at"]).isoformat(timespec="minutes")
+    return result
+
+
+def update_payload(data):
+    """状態変更時もnext_payment_atなどの読み取り専用値を除外する．"""
+    allowed = {"service_id", "plan_id", "custom_name", "custom_join_url", "custom_cancel_url",
+               "custom_cancel_memo", "plan_name", "amount", "cycle", "joined_at",
+               "trial_ends_at", "memo", "status"}
+    result = {key: value for key, value in data.items() if key in allowed}
+    for key in ("joined_at", "trial_ends_at"):
+        if result.get(key):
+            result[key] = parse_time(result[key]).isoformat(timespec="minutes")
+    return result
+```
+
+## src/logic/dates.py
+
+```python
+"""次回更新日(次回支払日)の計算。README 7章のルールをここ1か所にまとめる。
+
+支払日の考え方:
+  ・起点は入会日時。無料トライアルの終了日時があればそちらを起点にする
+    (トライアル中の次回支払日 = トライアル終了日時)
+  ・起点から「月額なら1か月ごと、年額なら12か月ごと」に支払日が来る
+  ・月末のずれは、その月の末日に寄せる(1/31入会の月額 → 2/28、3/31、4/30)
+  ・解約済みには支払日がない
+"""
+
+import calendar
+from datetime import datetime, timedelta, timezone
+
+CYCLE_MONTHS = {"monthly": 1, "yearly": 12}
+
+# このモジュールの内部では、日時は常に「オフセット無し・日本時間」で統一する
+# (datetime.now() もオフセット無しなので、比較できるようにそろえる必要がある)。
+# 本物のAPIは "+09:00" 付きで返す(mane_server/server_db_api.md §5)ので、
+# 受け取った時点で日本時間に変換しオフセットを外す。ダミーデータはもともとオフセット無し。
+JST = timezone(timedelta(hours=9))
+
+
+def parse_datetime(value) -> datetime | None:
+    """ "2026-09-20T21:00" のような文字列を datetime にする。空なら None。
+
+    オフセット付きの値(本物のAPI)は日本時間に変換してからオフセットを外す。
+    """
+    if not value:
+        return None
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(JST).replace(tzinfo=None)
+    return parsed
+
+
+def add_months(base: datetime, months: int) -> datetime:
+    """base の months か月後を返す。その日がない月は末日に寄せる。"""
+    total = base.year * 12 + (base.month - 1) + months
+    year, month = divmod(total, 12)
+    month += 1
+    last_day = calendar.monthrange(year, month)[1]
+    return base.replace(year=year, month=month, day=min(base.day, last_day))
+
+
+def cycle_months(sub: dict) -> int:
+    """更新周期を月数で返す(月額=1、年額=12)。"""
+    return CYCLE_MONTHS.get(sub.get("cycle"), 1)
+
+
+def payment_anchor(sub: dict) -> datetime | None:
+    """支払日の起点(最初の支払日)を返す。"""
+    return parse_datetime(sub.get("trial_end_at")) or parse_datetime(sub.get("joined_at"))
+
+
+def payment_in_month(sub: dict, year: int, month: int) -> datetime | None:
+    """指定した年月に来る支払日を返す。なければ None。"""
+    if sub.get("status") == "cancelled":
+        return None
+    anchor = payment_anchor(sub)
+    if anchor is None:
+        return None
+    diff = (year - anchor.year) * 12 + (month - anchor.month)
+    if diff < 0 or diff % cycle_months(sub) != 0:
+        return None
+    return add_months(anchor, diff)
+
+
+def next_payment_at(sub: dict, now: datetime | None = None) -> datetime | None:
+    """現在より後で最も近い支払日を返す。解約済みは None。"""
+    if sub.get("status") == "cancelled":
+        return None
+    if sub.get("next_payment_at"):
+        from logic.subscriptions import JST, parse_time
+        return parse_time(sub["next_payment_at"]).astimezone(JST).replace(tzinfo=None)
+    anchor = payment_anchor(sub)
+    if anchor is None:
+        return None
+    now = now or datetime.now()
+    if anchor > now:
+        return anchor
+    step = cycle_months(sub)
+    diff = (now.year - anchor.year) * 12 + (now.month - anchor.month)
+    count = diff // step
+    candidate = add_months(anchor, count * step)
+    while candidate <= now:
+        count += 1
+        candidate = add_months(anchor, count * step)
+    return candidate
+```
+
+## src/logic/ordering.py
+
+```python
+"""サブスク一覧の並び替え。どの並び順でも解約済みは末尾にまとめる。"""
+
+ORDER_FREQUENCY = "frequency"    # 更新頻度順(月額 → 年額)
+ORDER_REGISTERED = "registered"  # 登録順
+ORDER_LABELS = {ORDER_FREQUENCY: "更新頻度順", ORDER_REGISTERED: "登録順"}
+
+_CYCLE_RANK = {"weekly": 0, "monthly": 1, "yearly": 2}  # 小さいほど更新頻度が高い
+
+
+def sort_subscriptions(subs: list[dict], order: str = ORDER_FREQUENCY) -> list[dict]:
+    """並び替えた新しいリストを返す(元のリストは変えない)。同順位は元の並びを保つ。"""
+
+    def key(pair):
+        index, sub = pair
+        cancelled = 1 if sub.get("status") == "cancelled" else 0
+        rank = _CYCLE_RANK.get(sub.get("cycle"), 9) if order == ORDER_FREQUENCY else 0
+        return (cancelled, rank, index)
+
+    from logic.subscriptions import sort_subscriptions as sort_registered
+    return sort_registered(subs, order)
+
+
+def count_by_status(subs: list[dict]) -> dict:
+    """件数を数える。active は「契約中(トライアル中を含む)」。"""
+    cancelled = sum(1 for sub in subs if sub.get("status") == "cancelled")
+    trial = sum(1 for sub in subs if sub.get("status") == "trial")
+    return {"active": len(subs) - cancelled, "trial": trial, "cancelled": cancelled}
+```
+
+## src/logic/payments.py
+
+```python
+"""支払い見込みの計算。README 7章のルールをここ1か所にまとめる。
+
+年額プランの扱いは2通りから選べる:
+  MODE_BILLING : 更新月に全額を計上する(実際に引き落とされる月)
+  MODE_AVERAGE : 12で割って毎月に計上する(月あたりの負担)
+"""
+
+from logic import dates
+
+MODE_BILLING = "billing"
+MODE_AVERAGE = "average"
+
+
+def amount_in_month(sub: dict, year: int, month: int, mode: str = MODE_BILLING) -> int:
+    """そのサブスクが指定した年月に支払う見込み額(円)を返す。"""
+    if sub.get("status") == "cancelled":
+        return 0
+    amount = int(sub.get("amount") or 0)
+    if mode == MODE_AVERAGE and sub.get("cycle") == "yearly":
+        anchor = dates.payment_anchor(sub)
+        if anchor is None or (year, month) < (anchor.year, anchor.month):
+            return 0
+        return round(amount / 12)
+    return amount if dates.payment_in_month(sub, year, month) else 0
+
+
+def month_total(subs: list[dict], year: int, month: int, mode: str = MODE_BILLING) -> int:
+    """指定した年月の支払い見込み総額を返す。"""
+    return sum(amount_in_month(sub, year, month, mode) for sub in subs)
+
+
+def previous_month(year: int, month: int) -> tuple[int, int]:
+    """前月の (年, 月) を返す。"""
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+
+def next_month(year: int, month: int) -> tuple[int, int]:
+    """翌月の (年, 月) を返す。"""
+    return (year + 1, 1) if month == 12 else (year, month + 1)
+
+
+def summarize(subs: list[dict], year: int, month: int, mode: str = MODE_BILLING) -> dict:
+    """内訳画面に必要な値をまとめて返す。
+
+    戻り値:
+      total          : 当月の支払い見込み総額
+      previous_total : 前月の支払い見込み総額
+      diff           : 当月 − 前月
+      items          : 金額が多い順の [{"sub": サブスク, "amount": 金額, "ratio": 割合(0〜1)}]
+    """
+    items = []
+    for sub in subs:
+        amount = amount_in_month(sub, year, month, mode)
+        if amount > 0:
+            items.append({"sub": sub, "amount": amount})
+    items.sort(key=lambda item: item["amount"], reverse=True)
+    total = sum(item["amount"] for item in items)
+    for item in items:
+        item["ratio"] = item["amount"] / total if total else 0.0
+    previous_total = month_total(subs, *previous_month(year, month), mode)
+    return {
+        "total": total,
+        "previous_total": previous_total,
+        "diff": total - previous_total,
+        "items": items,
+    }
+```
+
+## src/logic/subscriptions.py
+
+```python
+"""UIから独立した登録・解約・再契約の規則．"""
+from datetime import datetime, timedelta, timezone
+
+JST = timezone(timedelta(hours=9))
+from urllib.parse import urlsplit
+import unicodedata
+
+STATUS_LABELS = {"active": "契約中", "trial": "無料トライアル中", "cancelled": "解約済み"}
+CYCLE_LABELS = {"monthly": "月額", "yearly": "年額"}
+SORT_LABELS = {"frequency": "更新頻度順", "registered": "登録順", "deadline": "期限が近い順"}
+
+
+class ValidationError(ValueError):
+    """入力欄ごとのエラーを保持する．"""
+
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__("入力内容を確認してください．")
+
+
+def normalize_keyword(value):
+    """全角英数字と大文字・小文字の違いを吸収する．"""
+    return unicodedata.normalize("NFKC", value).casefold().strip()
+
+
+def valid_url(value):
+    """HTTP(S)の絶対URLのみ受け付ける．空欄は任意項目として許可する．"""
+    if not value:
+        return True
+    try:
+        parsed = urlsplit(value)
+        return (parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+                and not parsed.username and not parsed.password
+                and not any(char.isspace() for char in value)
+                and parsed.port != 0)
+    except ValueError:
+        return False
+
+
+def parse_time(value):
+    """画面とAPIで共通の分単位の日時形式を読み取る．"""
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return parsed.replace(tzinfo=JST) if parsed.tzinfo is None else parsed
+
+
+def validate_subscription(data):
+    """登録内容を検証し，APIへ渡す辞書を返す．"""
+    result = {key: str(data.get(key, "") or "").strip() for key in (
+        "name", "plan_name", "cycle", "joined_at", "join_url", "cancel_url",
+        "cancel_memo", "status", "trial_ends_at", "icon", "service_id", "plan_id",
+    )}
+    if not result["trial_ends_at"]:
+        result["trial_ends_at"] = str(data.get("trial_end_at") or "").strip()
+    errors = {}
+    for key, maximum in (("name", 100), ("plan_name", 100), ("cancel_memo", 1000)):
+        if key != "cancel_memo" and not result[key]:
+            errors[key] = "入力してください．"
+        elif len(result[key]) > maximum:
+            errors[key] = f"{maximum}文字以内で入力してください．"
+    amount = unicodedata.normalize("NFKC", str(data.get("amount", ""))).strip()
+    if not amount or not amount.isascii() or not amount.isdecimal():
+        errors["amount"] = "0以上の整数を円単位で入力してください．"
+    elif int(amount) > 999999999:
+        errors["amount"] = "金額が大きすぎます．"
+    else:
+        result["amount"] = int(amount)
+    if result["cycle"] not in CYCLE_LABELS:
+        errors["cycle"] = "月額または年額を選択してください．"
+    if result["status"] not in STATUS_LABELS:
+        errors["status"] = "契約状態を選択してください．"
+    for key in ("join_url", "cancel_url", "icon"):
+        if len(result[key]) > 2048 or not valid_url(result[key]):
+            errors[key] = "http://またはhttps://で始まるURLを入力してください．"
+    joined = None
+    try:
+        joined = parse_time(result["joined_at"])
+    except ValueError:
+        errors["joined_at"] = "実在する日時を YYYY-MM-DDTHH:MM で入力してください．"
+    if result["status"] == "trial":
+        try:
+            ending = parse_time(result["trial_ends_at"])
+            if joined is not None and ending < joined:
+                errors["trial_ends_at"] = "入会日時以降の日時を入力してください．"
+        except ValueError:
+            errors["trial_ends_at"] = "トライアル終了日時を YYYY-MM-DDTHH:MM で入力してください．"
+    else:
+        result["trial_ends_at"] = ""
+    if errors:
+        raise ValidationError(errors)
+    return result
+
+
+def sort_subscriptions(items, order="frequency"):
+    """解約済みを末尾に集め，元データを変更せず安定した順序で返す．"""
+    if order not in SORT_LABELS:
+        raise ValueError("不明な並び順です．")
+    def key(pair):
+        index, item = pair
+        cancelled = item.get("status") == "cancelled"
+        value = item.get("created_at") or item.get("registered_at")
+        try:
+            registered = (parse_time(value).timestamp() if value else float("inf"), index)
+        except (ValueError, TypeError, OSError):
+            registered = (float("inf"), index)
+        if order == "frequency":
+            secondary = ({"weekly": 0, "monthly": 1, "yearly": 2}.get(item.get("cycle"), 9), registered)
+        elif order == "deadline":
+            value = item.get("next_payment_at") or item.get("trial_ends_at")
+            try:
+                time = parse_time(value).timestamp() if value else float("inf")
+            except (ValueError, TypeError, OSError):
+                time = float("inf")
+            secondary = (time, registered)
+        else:
+            secondary = registered
+        return (cancelled, secondary)
+    return [item for _, item in sorted(enumerate(items), key=key)]
+
+
+def cancellation_patch():
+    """解約済みとして記録する更新内容を返す．公式手続きは利用者が行う．"""
+    return {"status": "cancelled"}
+
+
+def reactivation_patch(subscription, joined_at):
+    """再契約の入会日時を検証し，サーバが再計算するための入会日時だけを送る．"""
+    data = validate_subscription({**subscription, "status": "active", "joined_at": joined_at})
+    return {"status": "active", "joined_at": data["joined_at"]}
+```
+
+## src/main.py
+
+```python
+"""アプリの起動と画面の切り替え。
+
+画面を増やすとき:
+  1. views/ に「page を受け取って中身を返す関数」を作る
+  2. navigation.py にルートを足す
+  3. 下の SCREENS に1行足す
+ヘッダーと下部タブはここで全画面に付けるので、各画面は中身だけを返せばよい。
+"""
+
+import traceback
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+import flet as ft
+
+import api_client
+import local_db
+import navigation
+import theme
+from components import feedback
+from components.app_header import app_header
+from components.tab_bar import tab_bar
+from views.account import account_view
+from views.breakdown import breakdown_view
+from views.deadline import deadline_view
+from views.detail import detail_view
+from views.home import home_view
+from views.register import register_view
+
+
+@dataclass
+class Screen:
+    """1画面分の設定。"""
+
+    view: Callable[[ft.Page], ft.Control]  # 画面の中身を返す関数
+    title: str | None = None               # ヘッダーに出す画面名(None ならアプリ名)
+
+
+# ルート → 画面。タブ画面(ホーム / 内訳 / 期限)は title なし
+SCREENS = {
+    navigation.HOME: Screen(home_view),
+    navigation.BREAKDOWN: Screen(breakdown_view),
+    navigation.DEADLINE: Screen(deadline_view),
+    navigation.REGISTER: Screen(register_view, title="サブスクを追加"),
+    navigation.ACCOUNT: Screen(account_view, title="アカウント"),
+}
+DETAIL_SCREEN = Screen(detail_view, title="サブスクの詳細")
+
+
+def _resolve(route: str) -> Screen | None:
+    """ルートに対応する画面を返す。なければ None。"""
+    if route.startswith(navigation.DETAIL_PREFIX):
+        return DETAIL_SCREEN
+    return SCREENS.get(route)
+
+
+def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Control | None) -> ft.View:
+    """ヘッダー + 中身 + 下部タブ を1つの画面(View)にまとめる。"""
+    controls = [header, ft.Container(content=content, expand=True, padding=ft.Padding.symmetric(horizontal=theme.GUTTER, vertical=16))]
+    if footer:
+        controls.append(footer)
+    return ft.View(
+        route=route,
+        padding=0,
+        spacing=0,
+        bgcolor=theme.GROUND,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        controls=[
+            ft.SafeArea(
+                expand=True,
+                content=ft.Column(
+                    expand=True,
+                    spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    controls=controls,
+                ),
+            )
+        ],
+    )
+
+
+def main(page: ft.Page) -> None:
+    """アプリの入口。"""
+    local_db.init_db()
+    page.title = "サブマネ"
+    theme.apply(page)
+
+    # PCで確認するときはスマホの大きさのウィンドウにする(実機では何もしない)
+    window = getattr(page, "window", None)
+    if window is not None and not page.web and page.platform in (
+        ft.PagePlatform.WINDOWS,
+        ft.PagePlatform.MACOS,
+        ft.PagePlatform.LINUX,
+    ):
+        window.width = theme.BASE_WIDTH
+        window.height = theme.BASE_HEIGHT
+
+    def build_content(screen: Screen) -> ft.Control:
+        """画面の中身を作る。画面側で想定外のエラーが起きてもアプリ全体は止めない。"""
+        try:
+            return screen.view(page)
+        except Exception:  # noqa: BLE001 開発中に原因を追えるよう、内容はコンソールに出す
+            traceback.print_exc()
+            return feedback.error_panel(page, "画面の表示中にエラーが起きました。")
+
+    def show_route(e=None) -> None:
+        """今のルートに合わせて画面を組み立てる。"""
+        route = getattr(e, "route", None) or page.route or navigation.HOME
+        screen = _resolve(route)
+        if screen is None:
+            navigation.go(page, navigation.HOME)
+            return
+
+        page.views.clear()
+
+        # 未ログインなら会員登録・ログイン画面だけを出す
+        if not api_client.is_logged_in():
+            if route != navigation.ACCOUNT:
+                navigation.go(page, navigation.ACCOUNT)
+                return
+            header = app_header(page, show_actions=False)
+            page.views.append(_shell(route, header, build_content(screen), footer=None))
+            page.update()
+            return
+
+        if route in navigation.TAB_ROUTES:
+            navigation.remember_tab(page, route)
+            page.views.append(_shell(route, app_header(page), build_content(screen), tab_bar(page, route)))
+        else:
+            # タブ画面の上に重ねる。端末の「戻る」で元のタブ画面に戻れる
+            base = navigation.last_tab(page)
+            page.views.append(_shell(base, app_header(page), ft.Container(), tab_bar(page, base)))
+            header = app_header(page, title=screen.title, show_back=True, show_actions=False)
+            page.views.append(_shell(route, header, build_content(screen), tab_bar(page, None)))
+        page.update()
+
+    def on_view_pop(e) -> None:
+        """端末の「戻る」操作。"""
+        navigation.go_back(page)
+
+    navigation.set_reload_handler(page, show_route)
+    page.on_route_change = show_route
+    page.on_view_pop = on_view_pop
+    show_route()
+
+
+if __name__ == "__main__":
+    ft.run(main, assets_dir=str(Path(__file__).parent / "assets"))
+```
+
+## src/navigation.py
+
+```python
+"""画面の切り替え。各画面はここの関数を呼ぶだけでよい(実際の切り替えは main.py が行う)。
+
+使い方:
+    import navigation
+    navigation.go(page, navigation.REGISTER)   # 登録画面へ
+    navigation.go_detail(page, sub["id"])      # 詳細画面へ
+    navigation.go_back(page)                   # 元のタブ画面へ戻る
+    sub_id = navigation.get_sub_id(page)       # 詳細画面で、表示するサブスクのIDを受け取る
+    navigation.open_url(page, sub["cancel_url"])  # 端末のブラウザで開く
+"""
+
+import flet as ft
+
+# ---- 画面のルート ----
+HOME = "/"
+BREAKDOWN = "/breakdown"
+DEADLINE = "/deadline"
+REGISTER = "/register"
+ACCOUNT = "/account"
+DETAIL_PREFIX = "/detail/"
+
+TAB_ROUTES = (HOME, BREAKDOWN, DEADLINE)
+
+_LAST_TAB_KEY = "navigation.last_tab"
+_RELOAD_KEY = "navigation.reload"
+
+
+def detail_route(sub_id) -> str:
+    """詳細画面のルートを作る。"""
+    return f"{DETAIL_PREFIX}{sub_id}"
+
+
+def go(page: ft.Page, route: str) -> None:
+    """指定した画面へ移る。"""
+    page.run_task(page.push_route, route)
+
+
+def go_detail(page: ft.Page, sub_id) -> None:
+    """詳細画面へ移る。"""
+    go(page, detail_route(sub_id))
+
+
+def go_back(page: ft.Page) -> None:
+    """最後に開いていたタブ画面(ホーム / 内訳 / 期限)へ戻る。"""
+    go(page, last_tab(page))
+
+
+def reload(page: ft.Page) -> None:
+    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。"""
+    handler = page.session.store.get(_RELOAD_KEY)
+    if handler:
+        handler()
+
+
+def get_sub_id(page: ft.Page) -> str | None:
+    """今のルートが詳細画面なら、サブスクのIDを文字列で返す。"""
+    route = page.route or ""
+    if route.startswith(DETAIL_PREFIX):
+        return route[len(DETAIL_PREFIX):] or None
+    return None
+
+
+def open_url(page: ft.Page, url: str) -> None:
+    """端末のブラウザでURLを開く(入会・退会ページ用)。"""
+    if url:
+        page.run_task(ft.UrlLauncher().launch_url, url)
+
+
+# ---- ここから下は main.py が使う ----
+def last_tab(page: ft.Page) -> str:
+    """最後に開いていたタブ画面のルートを返す。"""
+    return page.session.store.get(_LAST_TAB_KEY) or HOME
+
+
+def remember_tab(page: ft.Page, route: str) -> None:
+    """開いたタブ画面を覚えておく。"""
+    page.session.store.set(_LAST_TAB_KEY, route)
+
+
+def set_reload_handler(page: ft.Page, handler) -> None:
+    """reload() で呼ぶ関数を登録する。"""
+    page.session.store.set(_RELOAD_KEY, handler)
+```
+
+## src/service_assets.py
+
+```python
+"""授業用に同梱したサービスロゴの参照．画像の原本・出典はassets/iconsに保存．"""
+import json
+from functools import lru_cache
+from pathlib import Path
+import unicodedata
+
+
+def normalize_name(value):
+    return unicodedata.normalize('NFKC', str(value or '')).casefold().replace(' ', '').replace('　', '')
+
+
+@lru_cache(maxsize=1)
+def logo_catalog():
+    path = Path(__file__).parent / 'assets/icons/sources.json'
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def bundled_icon(subscription):
+    """サービスIDの有無に依存せず，slugか名称から同梱画像を返す．"""
+    catalog = logo_catalog()
+    slug = subscription.get('slug')
+    if slug in catalog and catalog[slug].get('filename'):
+        return 'icons/' + catalog[slug]['filename']
+    name = normalize_name(subscription.get('name'))
+    aliases = {'adobecreativecloud': 'adobe-cc', 'amazonprime': 'amazon-prime',
+               'amazonプライム': 'amazon-prime', 'youtube': 'youtube-premium',
+               'fod': 'fod-premium', 'abema': 'abema-premium'}
+    slug = aliases.get(name)
+    if slug is None:
+        slug = next((key for key, item in catalog.items() if normalize_name(item.get('name')) == name), None)
+    item = catalog.get(slug, {})
+    return 'icons/' + item['filename'] if item.get('filename') else None
+```
+
+## src/theme.py
+
+```python
+"""色・フォント・余白(全画面共通)。画面ごとに色コードを直接書かず、ここの定数を使う。"""
+
+import flet as ft
+
+# ---- 色 ----
+GROUND = "#F5F7F6"       # 画面の地色
+SURFACE = "#FFFFFF"      # ボタン、タブバー、カード
+INK = "#14201C"          # 本文
+INK_SUB = "#4A5552"      # 補足テキスト
+LINE = "#E0E7E3"         # 枠線
+ACCENT = "#146C5A"       # 主要ボタン、選択中の表示
+ACCENT_SOFT = "#E0F0E8"  # 選択中タブの背景
+TRIAL = "#B45309"        # 無料トライアルのバッジ
+OFF_FILL = "#D3D8D6"     # 解約済みアイコンの面
+OFF_INK = "#5A6360"      # 解約済みの文字
+DOT = "#AEB6B3"          # ページ位置の点(非選択)
+DANGER = "#A23B2A"       # エラー表示(通信エラーなどの案内)
+ERROR = "#B3261E"        # エラー表示(入力フォームの検証エラー)
+ON_ACCENT = "#FFFFFF"    # ACCENT や TRIAL の上に載せる文字
+
+# アイコン画像がないサービスのタイル色、円グラフの色(白文字が読める濃さ)
+TILE_COLORS = [
+    "#7A2E3A", "#2F5D50", "#1F3A5F", "#8A4B14", "#2B4C7E", "#3D4A1F",
+    "#6B2D5C", "#23515E", "#4A3728", "#36594A", "#5B3F8C", "#5E2A4F",
+]
+
+# ---- 寸法 ----
+GUTTER = 16        # 画面左右の余白
+TAP_MIN = 44       # タップできる要素の最小サイズ
+BASE_WIDTH = 390   # 基準の画面幅
+BASE_HEIGHT = 844
+
+# ---- フォント(assets/fonts/ に同梱) ----
+FONT = "ZenKaku"             # 本文
+FONT_BOLD = "ZenKakuBold"    # 見出し、強調
+FONT_BLACK = "ZenKakuBlack"  # アプリ名、アイコンの頭文字
+FONTS = {
+    FONT: "/fonts/ZenKakuGothicNew-Regular.ttf",
+    FONT_BOLD: "/fonts/ZenKakuGothicNew-Bold.ttf",
+    FONT_BLACK: "/fonts/ZenKakuGothicNew-Black.ttf",
+}
+_FAMILY_BY_WEIGHT = {"regular": FONT, "bold": FONT_BOLD, "black": FONT_BLACK}
+
+
+def apply(page: ft.Page) -> None:
+    """ページ全体にフォントと配色を設定する(main.py が起動時に1回呼ぶ)。"""
+    page.fonts = FONTS
+    page.theme = ft.Theme(color_scheme_seed=ACCENT, font_family=FONT)
+    page.theme_mode = ft.ThemeMode.LIGHT
+    page.bgcolor = GROUND
+    page.padding = 0
+
+
+def text(value: str, size: float = 14, weight: str = "regular", color: str = INK, **kwargs) -> ft.Text:
+    """共通フォントの文字を作る。weight は "regular" / "bold" / "black"。"""
+    return ft.Text(value, size=size, color=color, font_family=_FAMILY_BY_WEIGHT[weight], **kwargs)
+
+
+def tile_color(index: int) -> str:
+    """番号に応じたタイル色を返す(色数を超えたら最初に戻る)。"""
+    return TILE_COLORS[index % len(TILE_COLORS)]
+
+
+def yen(amount: int) -> str:
+    """金額を「¥1,234」の形にする。"""
+    return f"¥{amount:,}"
+```
+
+## src/views/__init__.py
+
+```python
+"""登録画面と状態変更の動作確認画面．"""
+```
+
+## src/views/account.py
+
+```python
+"""会員登録・ログイン画面(担当: 西内)。
+
+ログイン済みなら自分の情報(メールアドレス)とログアウトボタンを、
+未ログインなら新規登録・ログインを切り替えられるフォームを返す。
+"""
+
+import flet as ft
+
+import api_client
+import navigation
+import theme
+from api_client import ApiError
+from components import feedback
+
+
+def account_view(page: ft.Page) -> ft.Control:
+    """会員登録・ログイン画面の中身を返す。"""
+    if api_client.is_logged_in():
+        return _signed_in_view(page)
+    return _sign_in_view(page)
+
+
+def _signed_in_view(page: ft.Page) -> ft.Control:
+    """ログイン済みのときの中身。"""
+    email = api_client.get_user_email() or "ダミーデータでログイン中"
+
+    def log_out(event):
+        api_client.log_out()
+        navigation.reload(page)
+
+    return ft.Column(
+        spacing=16,
+        controls=[
+            theme.text("ログイン中", size=26, weight="bold"),
+            theme.text(email, size=14, color=theme.INK_SUB),
+            ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN),
+        ],
+    )
+
+
+def _sign_in_view(page: ft.Page) -> ft.Control:
+    """未ログインのときの中身(新規登録・ログインを切り替えるフォーム)。"""
+    state = {"mode": "login", "busy": False}
+    message = ft.Text("", color=theme.ERROR)
+    email_field = ft.TextField(label="メールアドレス", keyboard_type=ft.KeyboardType.EMAIL)
+    password_field = ft.TextField(label="パスワード", password=True, can_reveal_password=True,
+                                  helper="8文字以上")
+    title = theme.text("ログイン", size=26, weight="bold")
+    toggle_button = ft.TextButton("はじめての方はこちら(新規登録)")
+    submit_button = feedback.primary_button("ログイン", on_click=lambda e: submit(e))
+
+    def apply_mode():
+        """今のモード(login/signup)に合わせて文言を変える。"""
+        is_signup = state["mode"] == "signup"
+        title.value = "新規登録" if is_signup else "ログイン"
+        toggle_button.content = "登録済みの方はこちら(ログイン)" if is_signup else "はじめての方はこちら(新規登録)"
+        submit_button.content = "新規登録" if is_signup else "ログイン"
+        page.update()
+
+    def toggle_mode(event):
+        state["mode"] = "signup" if state["mode"] == "login" else "login"
+        message.value = ""
+        email_field.error = None
+        password_field.error = None
+        apply_mode()
+
+    toggle_button.on_click = toggle_mode
+
+    def submit(event):
+        if state["busy"]:
+            return
+        email_field.error = None
+        password_field.error = None
+        message.value = ""
+        if not (email_field.value or "").strip():
+            email_field.error = "入力してください．"
+        if not password_field.value:
+            password_field.error = "入力してください．"
+        elif len(password_field.value) < 8:
+            password_field.error = "8文字以上で入力してください．"
+        if email_field.error or password_field.error:
+            page.update()
+            return
+
+        state["busy"] = True
+        submit_button.disabled = True
+        toggle_button.disabled = True
+        page.update()
+        try:
+            if state["mode"] == "signup":
+                api_client.sign_up(email_field.value.strip(), password_field.value)
+            else:
+                api_client.log_in(email_field.value.strip(), password_field.value)
+        except ApiError as error:
+            message.value = str(error)
+        else:
+            navigation.go(page, navigation.HOME)
+            return
+        finally:
+            state["busy"] = False
+            submit_button.disabled = False
+            toggle_button.disabled = False
+            page.update()
+
+    return ft.Column(
+        spacing=16,
+        controls=[
+            title,
+            theme.text("サブマネを使うには会員登録またはログインしてください．", color=theme.INK_SUB),
+            email_field,
+            password_field,
+            message,
+            submit_button,
+            toggle_button,
+        ],
+    )
+```
+
+## src/views/breakdown.py
+
+```python
+"""内訳画面(担当: 玉造)。月ごとの支払い見込み総額、円グラフ、サービス別の金額一覧。
+
+・金額の計算は logic/payments.py だけで行う(この画面では計算しない)
+・年額プランを「更新月に全額計上」するか「月割り」にするかを画面上で切り替えられる
+・円グラフは flet-charts の PieChart
+"""
+
+from datetime import datetime
+
+import flet as ft
+import flet_charts as fch
+
+import api_client
+import navigation
+import theme
+from components import feedback
+from logic import payments
+
+MAX_SECTIONS = 6          # 円グラフで個別に出す件数。残りは「その他」にまとめる
+OTHERS_COLOR = theme.OFF_INK
+_MODE_LABELS = {
+    payments.MODE_BILLING: "年額は更新月に計上",
+    payments.MODE_AVERAGE: "年額を月割り",
+}
+
+
+def _diff_text(diff: int) -> str:
+    """前月差分の文言を返す。"""
+    if diff > 0:
+        return f"先月より {theme.yen(diff)} 多い"
+    if diff < 0:
+        return f"先月より {theme.yen(-diff)} 少ない"
+    return "先月と同じ"
+
+
+def _cycle_text(sub: dict, mode: str) -> str:
+    """一覧の補足(プラン名と計上のしかた)を返す。"""
+    if sub.get("cycle") == "yearly":
+        cycle = "年額を月割り" if mode == payments.MODE_AVERAGE else "年額(今月が更新月)"
+    else:
+        cycle = "月額"
+    if sub.get("status") == "trial":
+        cycle += " / トライアル終了後"
+    plan = sub.get("plan_name")
+    return f"{plan} / {cycle}" if plan and plan not in ("月額プラン", "年額プラン") else cycle
+
+
+def _pie(items: list[dict], colors: list[str]) -> ft.Control:
+    """サービス別の支出割合の円グラフを返す。"""
+    title_style = ft.TextStyle(size=12, color=theme.ON_ACCENT, font_family=theme.FONT_BOLD)
+    shown = items[:MAX_SECTIONS]
+    sections = [
+        fch.PieChartSection(
+            value=item["amount"],
+            color=colors[index],
+            radius=48,
+            title=f"{round(item['ratio'] * 100)}%" if item["ratio"] >= 0.08 else "",
+            title_style=title_style,
+        )
+        for index, item in enumerate(shown)
+    ]
+    rest = items[MAX_SECTIONS:]
+    if rest:
+        ratio = sum(item["ratio"] for item in rest)
+        sections.append(
+            fch.PieChartSection(
+                value=sum(item["amount"] for item in rest),
+                color=OTHERS_COLOR,
+                radius=48,
+                title=f"{round(ratio * 100)}%" if ratio >= 0.08 else "",
+                title_style=title_style,
+            )
+        )
+    return ft.Container(
+        height=220,
+        content=fch.PieChart(sections=sections, sections_space=2, center_space_radius=54, expand=True),
+    )
+
+
+def _item_row(page: ft.Page, item: dict, color: str, mode: str, last: bool) -> ft.Control:
+    """金額一覧の1行を返す。タップで詳細画面へ。"""
+    sub = item["sub"]
+    return ft.Container(
+        padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+        border=None if last else ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)),
+        on_click=lambda e: navigation.go_detail(page, sub["id"]),
+        content=ft.Row(
+            spacing=12,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Container(width=12, height=12, border_radius=3, bgcolor=color),
+                ft.Column(
+                    expand=True,
+                    spacing=0,
+                    controls=[
+                        theme.text(sub["name"], size=14, weight="bold", max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        theme.text(_cycle_text(sub, mode), size=11, color=theme.INK_SUB, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                    ],
+                ),
+                ft.Column(
+                    spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.END,
+                    controls=[
+                        theme.text(theme.yen(item["amount"]), size=14, weight="bold"),
+                        theme.text(f"{round(item['ratio'] * 100)}%", size=11, color=theme.INK_SUB),
+                    ],
+                ),
+            ],
+        ),
+    )
+
+
+def breakdown_view(page: ft.Page) -> ft.Control:
+    """内訳画面の中身を返す。"""
+    try:
+        subs = api_client.list_subscriptions()
+    except api_client.ApiError as err:
+        return feedback.error_panel(page, str(err))
+
+    now = datetime.now()
+    state = {
+        "year": now.year,
+        "month": now.month,
+        "mode": api_client.get_yearly_mode(),
+    }
+    body = ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+
+    def render() -> None:
+        """今の年月と計上方法で、中身を組み立て直す。"""
+        year, month, mode = state["year"], state["month"], state["mode"]
+        summary = payments.summarize(subs, year, month, mode)
+        items = summary["items"]
+        colors = [theme.tile_color(index) if index < MAX_SECTIONS else OTHERS_COLOR for index in range(len(items))]
+        is_this_month = (year, month) == (now.year, now.month)
+
+        controls = [
+            # 月の切り替え
+            ft.Row(
+                alignment=ft.MainAxisAlignment.CENTER,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=4,
+                controls=[
+                    ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, icon_color=theme.INK, tooltip="前の月", on_click=lambda e: move_month(-1)),
+                    ft.Container(
+                        width=150,
+                        alignment=ft.Alignment.CENTER,
+                        content=theme.text(f"{year}年{month}月" + ("(今月)" if is_this_month else ""), size=16, weight="bold"),
+                    ),
+                    ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, icon_color=theme.INK, tooltip="次の月", on_click=lambda e: move_month(1)),
+                ],
+            ),
+            # 総額と前月差分
+            ft.Container(
+                padding=ft.Padding.only(top=4, bottom=16),
+                content=ft.Column(
+                    spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        theme.text(theme.yen(summary["total"]), size=40, weight="black"),
+                        theme.text(_diff_text(summary["diff"]), size=13, color=theme.INK_SUB),
+                    ],
+                ),
+            ),
+            # 年額プランの計上方法
+            ft.Row(
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.SegmentedButton(
+                        selected=[mode],
+                        show_selected_icon=False,
+                        segments=[
+                            ft.Segment(value=value, label=theme.text(label, size=12))
+                            for value, label in _MODE_LABELS.items()
+                        ],
+                        on_change=change_mode,
+                    )
+                ],
+            ),
+        ]
+
+        if not items:
+            controls.append(feedback.message_panel("この月に支払い予定のサブスクはありません。"))
+        else:
+            controls.append(ft.Container(padding=ft.Padding.only(top=20, bottom=20), content=_pie(items, colors)))
+            if len(items) > MAX_SECTIONS:
+                controls.append(
+                    ft.Container(
+                        padding=ft.Padding.only(bottom=8),
+                        content=theme.text(
+                            f"円グラフは上位{MAX_SECTIONS}件を表示し、残りは「その他」(灰色)にまとめています。",
+                            size=11,
+                            color=theme.INK_SUB,
+                        ),
+                    )
+                )
+            controls.append(
+                ft.Container(
+                    bgcolor=theme.SURFACE,
+                    border=ft.Border.all(1, theme.LINE),
+                    border_radius=16,
+                    clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                    content=ft.Column(
+                        spacing=0,
+                        controls=[
+                            _item_row(page, item, colors[index], mode, last=index == len(items) - 1)
+                            for index, item in enumerate(items)
+                        ],
+                    ),
+                )
+            )
+        body.controls = controls
+
+    def move_month(step: int) -> None:
+        mover = payments.next_month if step > 0 else payments.previous_month
+        state["year"], state["month"] = mover(state["year"], state["month"])
+        render()
+        page.update()
+
+    def change_mode(e) -> None:
+        selected = e.control.selected
+        if not selected:
+            return
+        state["mode"] = selected[0]
+        api_client.set_yearly_mode(state["mode"])  # 端末に保存し、次回起動後も覚えておく
+        render()
+        page.update()
+
+    render()
+
+    return ft.Column(
+        expand=True,
+        spacing=0,
+        scroll=ft.ScrollMode.AUTO,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        controls=[
+            ft.Container(
+                padding=ft.Padding.only(left=theme.GUTTER, right=theme.GUTTER, top=24, bottom=8),
+                content=theme.text("支払い見込み", size=26, weight="bold"),
+            ),
+            ft.Container(
+                padding=ft.Padding.only(left=theme.GUTTER, right=theme.GUTTER, bottom=32),
+                content=body,
+            ),
+        ],
+    )
+```
+
+## src/views/deadline.py
+
+```python
+"""期限画面(担当: 小湊)。支払期日が近い順にサブスクを並べ，残り日数を強調表示する。"""
+
+from datetime import datetime
+
+import flet as ft
+
+import api_client
+import navigation
+import theme
+from components.service_icon import service_icon
+from logic.dates import next_payment_at
+
+
+def _badge(days_left: int) -> ft.Control:
+    """残り日数に応じたバッジを返す(当日は赤，3日以内は注意色)。"""
+    if days_left <= 0:
+        text, bg, fg = "本日更新", ft.Colors.RED_100, ft.Colors.RED_800
+    elif days_left <= 3:
+        text, bg, fg = f"あと {days_left} 日", ft.Colors.ORANGE_100, theme.TRIAL
+    else:
+        text, bg, fg = f"あと {days_left} 日", theme.GROUND, theme.INK_SUB
+    return ft.Container(
+        bgcolor=bg,
+        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+        border_radius=16,
+        content=theme.text(text, size=12, weight="bold", color=fg),
+    )
+
+
+def _card(page: ft.Page, sub: dict, due: datetime) -> ft.Control:
+    """一覧1件分のカードを返す。タップで詳細画面へ。"""
+    days_left = (due.date() - datetime.now().date()).days
+    return ft.Container(
+        bgcolor=theme.SURFACE,
+        border_radius=12,
+        padding=16,
+        border=ft.Border.all(1, theme.LINE),
+        on_click=lambda e: navigation.go_detail(page, sub.get("id")),
+        content=ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                ft.Row(
+                    spacing=12,
+                    controls=[
+                        service_icon(sub, size=44),
+                        ft.Column(
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            horizontal_alignment=ft.CrossAxisAlignment.START,
+                            spacing=2,
+                            controls=[
+                                theme.text(sub.get("name", ""), size=16, weight="bold"),
+                                theme.text(f"{theme.yen(sub.get('amount', 0))}（{due.strftime('%m/%d')}）",
+                                          size=13, color=theme.INK_SUB),
+                            ],
+                        ),
+                    ],
+                ),
+                _badge(days_left),
+            ],
+        ),
+    )
+
+
+def deadline_view(page: ft.Page) -> ft.Control:
+    """期限画面の中身を返す。"""
+    items = []
+    for sub in api_client.list_subscriptions() or []:
+        due = next_payment_at(sub)
+        if due is not None:
+            items.append((sub, due))
+    items.sort(key=lambda pair: pair[1])
+
+    cards = [_card(page, sub, due) for sub, due in items]
+    if not cards:
+        cards = [ft.Container(
+            padding=32,
+            alignment=ft.Alignment.CENTER,
+            content=theme.text("直近で更新予定のサブスクはありません。", size=14, color=theme.INK_SUB),
+        )]
+
+    return ft.Column(
+        scroll=ft.ScrollMode.AUTO,
+        spacing=16,
+        controls=[
+            theme.text("支払期日が近いサブスク", size=22, weight="bold"),
+            theme.text("解約の検討やチャージ確認にお役立てください。", size=13, color=theme.INK_SUB),
+            ft.Column(spacing=10, controls=cards),
+        ],
+    )
+```
+
+## src/views/detail.py
+
+```python
+"""詳細画面(担当: 小湊)。
+
+登録済みサブスク1件の詳細表示、入会・退会ページへの遷移、解約・再契約、削除を行う。
+解約・再契約の確認フローは components.status_actions に委ねる(登録画面とは独立して作られた部品)。
+"""
+
+import flet as ft
+
+import api_client
+import navigation
+import theme
+from api_client import ApiError
+from components import feedback
+from components.service_icon import service_icon
+from components.status_actions import status_actions
+from logic.dates import next_payment_at
+
+
+def _next_payment_text(item: dict) -> str:
+    """次回更新日の表示文言を返す(解約済みはなし)。"""
+    dt = next_payment_at(item)
+    return dt.strftime("%Y年%m月%d日") if dt else "なし（解約済み）"
+
+
+def detail_view(page: ft.Page) -> ft.Control:
+    """詳細画面の中身を返す。"""
+    sub_id = navigation.get_sub_id(page)
+    try:
+        item = api_client.get_subscription(sub_id)
+    except ApiError as error:
+        return feedback.message_panel(str(error), icon=ft.Icons.ERROR_OUTLINE)
+
+    def open_delete_dialog(event):
+        def confirm_delete(event):
+            api_client.delete_subscription(sub_id)
+            page.pop_dialog()
+            page.show_dialog(ft.SnackBar(ft.Text("削除しました．")))
+            navigation.go_back(page)
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("サブスクの削除"),
+            content=ft.Text(f"「{item.get('name')}」を一覧から削除してもよろしいですか．"),
+            actions=[
+                ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog()),
+                ft.TextButton("削除", on_click=confirm_delete),
+            ],
+        )
+        page.show_dialog(dialog)
+
+    def status_changed(updated: dict):
+        page.show_dialog(ft.SnackBar(ft.Text("契約状態を更新しました．")))
+        navigation.reload(page)
+
+    return ft.Column(
+        scroll=ft.ScrollMode.AUTO,
+        spacing=20,
+        controls=[
+            ft.Container(
+                bgcolor=theme.SURFACE,
+                border_radius=12,
+                padding=20,
+                border=ft.Border.all(1, theme.LINE),
+                content=ft.Column(
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=12,
+                    controls=[
+                        service_icon(item, size=64),
+                        theme.text(item.get("name", ""), size=22, weight="bold"),
+                        theme.text(item.get("plan_name", ""), size=14, color=theme.INK_SUB),
+                        ft.Divider(color=theme.LINE, height=1),
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            controls=[
+                                theme.text("利用料金", size=14, color=theme.INK_SUB),
+                                theme.text(
+                                    f"{theme.yen(item.get('amount', 0))} / "
+                                    + ("月" if item.get("cycle") == "monthly" else "年"),
+                                    size=18, weight="bold",
+                                ),
+                            ],
+                        ),
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            controls=[
+                                theme.text("次回更新日", size=14, color=theme.INK_SUB),
+                                theme.text(
+                                    _next_payment_text(item), size=16, weight="bold",
+                                    color=theme.TRIAL if item.get("status") == "trial" else theme.INK,
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ),
+            ft.Container(
+                bgcolor=theme.SURFACE,
+                border_radius=12,
+                padding=16,
+                border=ft.Border.all(1, theme.LINE),
+                content=ft.Column(
+                    horizontal_alignment=ft.CrossAxisAlignment.START,
+                    spacing=8,
+                    controls=[
+                        ft.Row(controls=[
+                            ft.Icon(ft.Icons.INFO_OUTLINED, size=18, color=theme.INK_SUB),
+                            theme.text("手続き時の確認事項", size=14, weight="bold"),
+                        ]),
+                        theme.text(item.get("cancel_memo") or "メモはありません．", size=13, color=theme.INK_SUB),
+                    ],
+                ),
+            ),
+            status_actions(page, item, api_client, status_changed),
+            ft.OutlinedButton(
+                content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE), ft.Text("削除する")],
+                    alignment=ft.MainAxisAlignment.CENTER),
+                style=ft.ButtonStyle(color=theme.DANGER),
+                height=48,
+                on_click=open_delete_dialog,
+            ),
+        ],
+    )
+```
+
+## src/views/home.py
+
+```python
+"""スマホでサービス名と状態が読める，3列・12件のホーム画面．"""
+import math
+import flet as ft
+import api_client
+import navigation
+import theme
+from components import feedback
+from components.service_icon import service_icon, status_label
+from logic import ordering
+
+COLUMNS = 3
+ROWS = 4
+PER_PAGE = COLUMNS * ROWS
+
+
+def _stat(label, value, color):
+    return ft.Container(expand=True, bgcolor=theme.SURFACE, padding=12, border_radius=14,
+        border=ft.Border.all(1, theme.LINE), content=ft.Column(spacing=3, controls=[
+            theme.text(str(value), size=23, weight='bold', color=color),
+            theme.text(label, size=11, color=theme.INK_SUB)]))
+
+
+def _tile(page, sub, size=64):
+    cancelled = sub.get('status') == 'cancelled'
+    state = status_label(sub)
+    return ft.Container(expand=1, padding=ft.Padding.symmetric(vertical=10, horizontal=3),
+        border_radius=16, bgcolor=theme.SURFACE, border=ft.Border.all(1, theme.LINE),
+        # 解約済みは画像・文字・バッジを含むカード全体を無彩色にして薄くする．
+        color_filter=ft.ColorFilter(color=ft.Colors.WHITE, blend_mode=ft.BlendMode.SATURATION)
+            if cancelled else None,
+        opacity=0.5 if cancelled else 1.0,
+        on_click=lambda e: navigation.go_detail(page, sub['id']),
+        content=ft.Semantics(button=True, label=f"{sub['name']} {state} 詳細を開く",
+            content=ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                service_icon(sub, size=size, ring_color=theme.SURFACE),
+                ft.Container(height=38, alignment=ft.Alignment.CENTER,
+                    content=theme.text(sub['name'], size=12, weight='bold', max_lines=2,
+                        overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER,
+                        color=theme.OFF_INK if cancelled else theme.INK)),
+                theme.text('解約済み' if cancelled else ('トライアル中' if sub.get('status') == 'trial'
+                           else f"{theme.yen(int(sub.get('amount') or 0))} / {'月' if sub.get('cycle') == 'monthly' else '年'}"),
+                    size=10, color=theme.TRIAL if sub.get('status') == 'trial' else theme.INK_SUB,
+                    max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+            ])))
+
+
+def _build_pages(page, subscriptions, size):
+    pages = []
+    for start in range(0, len(subscriptions), PER_PAGE):
+        chunk = subscriptions[start:start + PER_PAGE]
+        rows = []
+        for index in range(0, len(chunk), COLUMNS):
+            tiles = [_tile(page, sub, size) for sub in chunk[index:index + COLUMNS]]
+            tiles.extend(ft.Container(expand=1) for _ in range(COLUMNS - len(tiles)))
+            rows.append(ft.Row(controls=tiles, spacing=8, vertical_alignment=ft.CrossAxisAlignment.START))
+        pages.append(ft.Column(controls=rows, spacing=8))
+    return pages
+
+
+def home_view(page):
+    try:
+        subs = api_client.list_subscriptions()
+    except api_client.ApiError as error:
+        return feedback.error_panel(page, str(error))
+    counts = ordering.count_by_status(subs)
+    state = {'order': ordering.ORDER_FREQUENCY, 'current': 0}
+    size = min(72, max(52, int(((page.width or theme.BASE_WIDTH) - 48) / 3 - 30)))
+    heading = ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[
+        ft.Column(spacing=3, expand=True, controls=[theme.text('マイサブスク', size=25, weight='bold'),
+            theme.text('契約と更新を，ひと目で確認．', size=12, color=theme.INK_SUB)]),
+        ft.IconButton(icon=ft.Icons.ADD_ROUNDED, bgcolor=theme.ACCENT, icon_color=theme.ON_ACCENT,
+            width=46, height=46, tooltip='サブスクを追加',
+            on_click=lambda e: navigation.go(page, navigation.REGISTER))])
+    stats = ft.Row(spacing=8, controls=[_stat('契約中', counts['active'], theme.ACCENT),
+        _stat('トライアル', counts['trial'], theme.TRIAL), _stat('解約済み', counts['cancelled'], theme.OFF_INK)])
+    if not subs:
+        return ft.Column(scroll=ft.ScrollMode.AUTO, spacing=18, controls=[heading, stats,
+            feedback.message_panel('最初のサブスクを登録しましょう．\n契約内容をまとめて確認できます．',
+                button_label='サブスクを追加', on_click=lambda e: navigation.go(page, navigation.REGISTER))])
+    count = math.ceil(len(subs) / PER_PAGE)
+    pager = ft.PageView(controls=_build_pages(page, ordering.sort_subscriptions(subs), size),
+                       height=min(ROWS, math.ceil(len(subs) / COLUMNS)) * (size + 100))
+    position = theme.text('', size=12, color=theme.INK_SUB)
+    dots = ft.Row(spacing=5, alignment=ft.MainAxisAlignment.CENTER)
+    previous = ft.IconButton(icon=ft.Icons.CHEVRON_LEFT, tooltip='前のページ', width=44, height=44)
+    following = ft.IconButton(icon=ft.Icons.CHEVRON_RIGHT, tooltip='次のページ', width=44, height=44)
+
+    def refresh_position():
+        index = state['current']
+        position.value = f'{index + 1} / {count}'
+        dots.controls = [ft.Container(width=18 if i == index else 6, height=6, border_radius=3,
+            bgcolor=theme.ACCENT if i == index else theme.DOT) for i in range(count)]
+        previous.disabled = index == 0
+        following.disabled = index == count - 1
+
+    def go_to(index):
+        page.run_task(pager.go_to_page, index, 250)
+
+    previous.on_click = lambda e: go_to(max(0, state['current'] - 1))
+    following.on_click = lambda e: go_to(min(count - 1, state['current'] + 1))
+
+    def page_changed(event):
+        state['current'] = int(event.control.selected_index or 0)
+        refresh_position()
+        page.update()
+    pager.on_change = page_changed
+
+    def order_changed(event):
+        state['order'] = event.control.value
+        state['current'] = 0
+        pager.controls = _build_pages(page, ordering.sort_subscriptions(subs, state['order']), size)
+        pager.selected_index = 0
+        refresh_position()
+        page.update()
+
+    sort = ft.Dropdown(label='並び順', value=state['order'], expand=True,
+        options=[ft.DropdownOption(key=key, text=value) for key, value in ordering.ORDER_LABELS.items()],
+        on_select=order_changed)
+    refresh_position()
+    return ft.Column(spacing=18, scroll=ft.ScrollMode.AUTO, controls=[heading, stats,
+        ft.Row(controls=[sort, ft.Container(padding=8, content=theme.text(f'{len(subs)}件', size=13, color=theme.INK_SUB))]),
+        pager, ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, visible=count > 1,
+            controls=[previous, ft.Column(spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[dots, position]), following]),
+        theme.text('時計：トライアル中　✓：解約済み\n左右にスワイプして，次のページへ．',
+            size=11, color=theme.INK_SUB, text_align=ft.TextAlign.CENTER)])
+```
+
+## src/views/register.py
+
+```python
+"""石井担当：定番サービス検索と手入力によるサブスク登録画面．"""
+import asyncio
+from datetime import datetime
+import flet as ft
+import theme
+import api_client
+import navigation
+from api_client import ApiError
+from logic.api_bridge import call_api
+from components.service_icon import service_icon
+from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
+
+
+def register_view(page, api=None, on_saved=None, on_back=None):
+    """pageのみでも生成でき，共通APIと遷移コールバックを注入できる．"""
+    api = api or api_client
+    def default_saved(item):
+        page.show_dialog(ft.SnackBar(ft.Text(item["name"] + "を保存しました．")))
+        navigation.go_back(page)
+    on_saved = on_saved or default_saved
+    on_back = on_back or (lambda: navigation.go_back(page))
+    message = ft.Text("", color=theme.ERROR)
+    results = ft.Column(spacing=8, key="service-search-results")
+    plans = ft.Dropdown(label="定番サービスのプラン", visible=False)
+    selected = {"service": None, "search_version": 0, "busy": False, "completed": False}
+    fields = {
+        "name": ft.TextField(label="サービス名 *", max_length=100),
+        "plan_name": ft.TextField(label="料金プラン名 *", max_length=100),
+        "cycle": ft.Dropdown(label="更新周期 *", value="monthly", options=[
+            ft.DropdownOption(key=key, text=value) for key, value in CYCLE_LABELS.items()]),
+        "amount": ft.TextField(label="1回の支払額（円） *", keyboard_type=ft.KeyboardType.NUMBER,
+                               helper="無料トライアル中も，有料移行後の金額を入力してください．"),
+        "joined_at": ft.TextField(label="入会日時 *", value=datetime.now(JST).strftime("%Y-%m-%dT%H:%M"),
+                                  helper="日本時間・分単位の例：2026-10-05T12:30"),
+        "status": ft.Dropdown(label="契約状態 *", value="active", options=[
+            ft.DropdownOption(key=key, text=value) for key, value in STATUS_LABELS.items() if key != "cancelled"]),
+        "trial_ends_at": ft.TextField(label="トライアル終了日時 *", visible=False,
+                                      hint_text="2026-11-05T12:30"),
+        "join_url": ft.TextField(label="入会URL（任意）", hint_text="https://…"),
+        "cancel_url": ft.TextField(label="退会URL（任意）", hint_text="https://…"),
+        "cancel_memo": ft.TextField(label="退会に必要な情報（任意）", multiline=True,
+                                    min_lines=2, max_lines=4, max_length=1000,
+                                    helper="例：メールアドレスとパスワードの準備が必要．パスワード自体は入力しないでください．"),
+    }
+
+    def status_changed(event):
+        """無料トライアルを選択したときだけ終了日時を表示する．"""
+        fields["trial_ends_at"].visible = fields["status"].value == "trial"
+        page.update()
+
+    fields["status"].on_select = status_changed
+
+    def apply_plan(event=None):
+        """選択したプランを自動入力し，その後の手修正を許可する．"""
+        service = selected["service"]
+        if service and plans.value is not None:
+            plan = service["plans"][int(plans.value)]
+            for key, source in (("plan_name", "name"), ("cycle", "cycle"), ("amount", "amount")):
+                fields[key].value = str(plan[source])
+        page.update()
+
+    plans.on_select = apply_plan
+
+    def choose_service(service):
+        """名称，URL，メモとプラン候補を取り込む．"""
+        if selected["busy"]:
+            return
+        selected["search_version"] += 1
+        selected["completed"] = False
+        save_button.disabled = False
+        results_host.visible = True
+        results_host.height = 50
+        selected["service"] = service
+        for key in ("name", "join_url", "cancel_url", "cancel_memo"):
+            fields[key].read_only = True
+        for key in ("name", "join_url", "cancel_url", "cancel_memo"):
+            fields[key].value = service.get(key, "")
+        plans.options = [ft.DropdownOption(key=str(index), text=plan["name"])
+                         for index, plan in enumerate(service.get("plans", []))]
+        plans.visible = bool(plans.options)
+        plans.value = "0" if plans.options else None
+        apply_plan()
+        results.controls = [ft.Text("選択済み：" + service["name"], color=theme.ACCENT)]
+        page.update()
+
+    async def search_services(event=None):
+        """連続入力では古い検索結果を破棄し，失敗時は再試行できる．"""
+        selected["search_version"] += 1
+        version = selected["search_version"]
+        await asyncio.sleep(0.25)
+        if version != selected["search_version"]:
+            return
+        results_host.visible = True
+        results_host.height = 220
+        results.controls = [ft.ProgressRing(width=20, height=20)]
+        page.update()
+        try:
+            services = await call_api(api, "search_services", search.value or "")
+            if version != selected["search_version"]:
+                return
+            results.controls = [ft.Container(
+                bgcolor=theme.GROUND, border_radius=12, padding=10,
+                on_click=lambda e, service=service: choose_service(service),
+                content=ft.Row(spacing=10, controls=[service_icon(service, size=38),
+                    theme.text(service["name"], size=14, expand=True, max_lines=2),
+                    ft.Icon(ft.Icons.CHEVRON_RIGHT, color=theme.INK_SUB)])) for service in services]
+            if not services:
+                results.controls = [ft.Text("該当するサービスがありません．下の欄へ手入力できます．", color=theme.INK_SUB)]
+        except ApiError as error:
+            if version != selected["search_version"]:
+                return
+            results.controls = [ft.Text(str(error), color=theme.ERROR),
+                                ft.Button("検索を再試行", on_click=search_services)]
+        page.update()
+
+    search = ft.TextField(label="定番サービスを名称で検索", prefix_icon=ft.Icons.SEARCH,
+                          on_change=search_services, on_submit=search_services)
+
+    def clear_service(event):
+        """定番サービスとの関連を解除し，手入力用の空欄に戻す．"""
+        selected["search_version"] += 1
+        selected["completed"] = False
+        save_button.disabled = False
+        results_host.visible = False
+        selected["service"] = None
+        for key in ("name", "join_url", "cancel_url", "cancel_memo"):
+            fields[key].read_only = False
+        for key in ("name", "plan_name", "amount", "join_url", "cancel_url", "cancel_memo"):
+            fields[key].value = ""
+        plans.visible = False
+        results.controls = []
+        page.update()
+
+    async def save(event):
+        """入力を検証し，二重クリックによる重複登録を防ぐ．"""
+        if selected["busy"] or selected["completed"]:
+            return
+        for control in fields.values():
+            if isinstance(control, ft.Dropdown):
+                control.error_text = None
+            else:
+                control.error = None
+        message.value = ""
+        message.color = theme.ERROR
+        service = selected["service"] or {}
+        data = {key: control.value for key, control in fields.items()}
+        plan = service.get("plans", [])[int(plans.value)] if service and plans.value is not None else {}
+        data.update(icon=service.get("icon", ""), service_id=service.get("id", ""), plan_id=plan.get("id", ""))
+        try:
+            data = validate_subscription(data)
+        except ValidationError as error:
+            for key, value in error.errors.items():
+                if key in fields:
+                    if isinstance(fields[key], ft.Dropdown):
+                        fields[key].error_text = value
+                    else:
+                        fields[key].error = value
+            message.value = "入力内容を確認してください．"
+            page.update()
+            return
+        selected["busy"] = True
+        save_button.disabled = True
+        for control in [search, search_button, plans, manual_button, back_button, *fields.values()]:
+            control.disabled = True
+        page.update()
+        try:
+            item = await call_api(api, "create_subscription", data)
+        except ApiError as error:
+            message.value = str(error)
+            aliases = {"custom_name": "name", "custom_join_url": "join_url",
+                       "custom_cancel_url": "cancel_url", "custom_cancel_memo": "cancel_memo"}
+            for key, errors in error.details.items():
+                control = fields.get(aliases.get(key, key))
+                if control is not None:
+                    text = "，".join(map(str, errors)) if isinstance(errors, list) else str(errors)
+                    if isinstance(control, ft.Dropdown):
+                        control.error_text = text
+                    else:
+                        control.error = text
+        else:
+            selected["completed"] = True
+            if on_saved:
+                result = on_saved(item)
+                if asyncio.iscoroutine(result):
+                    await result
+            else:
+                message.color = theme.ACCENT
+                message.value = "登録しました．"
+        finally:
+            selected["busy"] = False
+            save_button.disabled = selected["completed"]
+            for control in [search, search_button, plans, manual_button, back_button, *fields.values()]:
+                control.disabled = False
+            page.update()
+
+    save_button = ft.Button("この内容で登録する", icon=ft.Icons.ADD, bgcolor=theme.ACCENT,
+                            color=theme.SURFACE, height=48, on_click=save)
+    manual_button = ft.TextButton("定番にないサービスを手入力する", on_click=clear_service)
+    back_button = ft.TextButton("一覧に戻る", on_click=lambda e: on_back() if on_back else page.navigate("/"))
+    search_button = ft.Button("定番サービスを表示・検索", height=44, on_click=search_services)
+    def section(title, caption, controls):
+        return ft.Container(bgcolor=theme.SURFACE, padding=16, border_radius=18,
+            border=ft.Border.all(1, theme.LINE), content=ft.Column(spacing=12, controls=[
+                theme.text(title, size=16, weight="bold"),
+                theme.text(caption, size=12, color=theme.INK_SUB), *controls]))
+
+    # 画面上端に共通の戻るボタンがあるため，フォーム内の戻る操作はフッターへまとめる．
+    results_host = ft.Container(content=results, height=220, visible=False)
+    search_panel = section("1．サービスを選ぶ", "名称で検索するか，手入力で登録できます．", [
+        search, search_button, results_host, manual_button, plans])
+    results.scroll = ft.ScrollMode.AUTO
+    details_panel = section("2．契約内容", "* は必須項目です．料金は1回の支払額です．", [
+        fields["name"], fields["plan_name"],
+        ft.Row(spacing=10, controls=[ft.Container(content=fields["cycle"], expand=1),
+                                   ft.Container(content=fields["status"], expand=1)]),
+        fields["amount"], fields["joined_at"], fields["trial_ends_at"]])
+    # 金額欄は全幅で表示し，狭い画面でも金額と単位を読み取れるようにする．
+    fields["amount"].helper = None
+    links_panel = section("3．入会・退会の情報", "URLと退会メモは任意です．パスワード自体は保存しないでください．", [
+        fields["join_url"], fields["cancel_url"], fields["cancel_memo"]])
+    body = ft.Column(expand=True, spacing=16, scroll=ft.ScrollMode.AUTO,
+                     controls=[search_panel, details_panel, links_panel, message])
+    save_button.expand = True
+    save_button.height = 50
+    footer = ft.Container(bgcolor=theme.GROUND, padding=ft.Padding.only(top=10),
+        content=ft.Row(spacing=8, controls=[back_button, save_button]))
+    return ft.Column(expand=True, spacing=0, controls=[body, footer])
+```
+
+## tests/conftest.py
+
+```python
+"""api_client・local_db はテスト間で共有される状態を持つので，テストごとに初期化する。"""
+import copy
+
+import pytest
+
+import api_client
+import config
+import dummy_data
+import local_db
+
+
+@pytest.fixture(autouse=True)
+def reset_dummy_store(tmp_path, monkeypatch):
+    """local_db を一時フォルダのDBで初期化し、api_client のダミー一覧・ログイン状態を初期値に戻す。
+
+    config.USE_DUMMY_DATA/API_BASE_URL は本物のAPIに繋ぐ設定に変えて開発することもあるので、
+    テストはそのときの config.py の内容に関わらず常にダミーモードを前提にする
+    (本物のAPIを使う挙動を確認したいテストは、そのテスト自身で上書きする)。
+    """
+    monkeypatch.setattr(config, "USE_DUMMY_DATA", True)
+    local_db.init_db(tmp_path / "test.db")
+    api_client._dummy_subs = copy.deepcopy(dummy_data.SUBSCRIPTIONS)
+    api_client._logged_in = True
+    api_client._client = None
+    api_client._session_restored = False
+    yield
+```
+
+## tests/test_api_contract.py
+
+```python
+"""設計書v0.2のサーバ応答・送信内容と通信断を外部通信なしで検証する．"""
+import asyncio
+import json
+from datetime import datetime, timezone
+import httpx
+import pytest
+from api_client import ApiClient, ApiError, OfflineError
+from logic.subscriptions import cancellation_patch, reactivation_patch, sort_subscriptions
+
+
+def draft(**changes):
+    return {"name": "手入力", "plan_name": "月額", "amount": 1000, "cycle": "monthly",
+            "joined_at": "2026-10-05T12:30", "status": "active", **changes}
+
+
+def test_wrapped_services_and_subscriptions_keep_server_fields():
+    async def scenario():
+        record = {"id": 42, "next_payment_at": "2026-11-05T12:30+09:00", "created_at": "2026-10-05T12:30+09:00"}
+        def handler(request):
+            if request.url.path.endswith("services"):
+                assert request.url.params["q"] == "動画"
+                return httpx.Response(200, json={"services": [{"id": 3, "plans": [{"id": 30}]}]})
+            return httpx.Response(200, json={"subscriptions": [record], "server_time": "2026-10-05T12:30+09:00"})
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            assert (await api.search_services("動画"))[0]["plans"][0]["id"] == 30
+            assert await api.list_subscriptions() == [record]
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("standard", [True, False])
+def test_registration_sends_ids_or_custom_fields_and_japanese_time(standard):
+    async def scenario():
+        def handler(request):
+            assert request.method == "POST" and request.url.path == "/api/v1/subscriptions"
+            payload = json.loads(request.content)
+            assert payload["joined_at"] == "2026-10-05T12:30+09:00"
+            assert payload["trial_ends_at"] == "2026-10-10T12:30+09:00"
+            assert not {"status", "name", "icon", "next_payment_at"} & payload.keys()
+            if standard:
+                assert payload["service_id"] == 3 and payload["plan_id"] == 30
+                assert "custom_name" not in payload
+            else:
+                assert payload["custom_name"] == "手入力"
+                assert payload["custom_cancel_url"] == "https://example.com/cancel"
+                assert "service_id" not in payload
+            return httpx.Response(201, json={"id": 42, "status": "trial", **payload})
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            data = draft(status="trial", trial_ends_at="2026-10-10T12:30", cancel_url="https://example.com/cancel")
+            if standard:
+                data.update(service_id=3, plan_id=30)
+            assert (await api.create_subscription(data))["id"] == 42
+    asyncio.run(scenario())
+
+
+def test_cancel_and_reactivate_accept_server_dates_without_sending_computed_fields():
+    async def scenario():
+        seen = []
+        def handler(request):
+            seen.append(json.loads(request.content))
+            assert request.method == "PATCH" and request.url.path == "/api/v1/subscriptions/42"
+            return httpx.Response(200, json={"id": 42, "next_payment_at": "2026-11-05T12:30+09:00", **seen[-1]})
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            await api.update_subscription(42, cancellation_patch())
+            result = await api.update_subscription(42, reactivation_patch(draft(joined_at="2026-01-01T12:30+09:00", status="cancelled"), "2026-10-05T12:30"))
+            assert seen == [{"status": "cancelled"}, {"status": "active", "joined_at": "2026-10-05T12:30+09:00"}]
+            assert result["next_payment_at"] == "2026-11-05T12:30+09:00"
+    asyncio.run(scenario())
+
+
+def test_validation_error_retains_field_details():
+    async def scenario():
+        body = {"error": {"code": "validation_error", "message": "入力内容に誤りがあります", "details": {"amount": ["金額を確認してください"]}}}
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(lambda request: httpx.Response(422, json=body))) as session:
+            api = ApiClient(use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            with pytest.raises(ApiError) as error:
+                await api.create_subscription(draft())
+            assert error.value.status_code == 422
+            assert error.value.code == "validation_error"
+            assert error.value.details == body["error"]["details"]
+    asyncio.run(scenario())
+
+
+def test_offline_registration_does_not_retry_or_write_dummy_storage(tmp_path):
+    async def scenario():
+        calls = []
+        def handler(request):
+            calls.append(request)
+            raise httpx.ConnectError("offline", request=request)
+        file = tmp_path / "must-not-exist.json"
+        async with httpx.AsyncClient(base_url="https://test.example/api/v1/", transport=httpx.MockTransport(handler)) as session:
+            api = ApiClient(file, use_dummy=False, base_url="https://test.example/api/v1", http_session=session)
+            with pytest.raises(OfflineError):
+                await api.create_subscription(draft())
+            assert len(calls) == 1 and not file.exists()
+    asyncio.run(scenario())
+
+
+def test_registration_order_uses_created_at_and_datetime_objects():
+    records = [{"id": "later", "created_at": "2026-10-05T12:30+09:00"},
+               {"id": "earlier", "created_at": datetime(2026, 10, 5, 2, tzinfo=timezone.utc)},
+               {"id": "cancelled", "status": "cancelled", "created_at": "2026-01-01T00:00"}]
+    assert [item["id"] for item in sort_subscriptions(records, "registered")] == ["earlier", "later", "cancelled"]
+
+
+def test_deadline_order_compares_naive_japanese_time_and_utc():
+    records = [{"id": "later", "next_payment_at": "2026-10-05T04:00+00:00"},
+               {"id": "earlier", "next_payment_at": "2026-10-05T12:30"}]
+    assert [item["id"] for item in sort_subscriptions(records, "deadline")] == ["earlier", "later"]
+```
+
+## tests/test_api_session.py
+
+```python
+"""Cookie認証を保持し，取得エラーを画面用の例外に変換する．"""
+import httpx
+import pytest
+
+import api_client
+import config
+from api_client import ApiError
+
+
+def test_cookie_session_is_shared_across_requests(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path == "/api/v1/session":
+            return httpx.Response(200, json={"ok": True},
+                                   headers={"set-cookie": "session=test; Path=/; HttpOnly; Secure"})
+        return httpx.Response(200, json={"services": [], "subscriptions": []})
+
+    monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
+    monkeypatch.setattr(api_client, "_client", httpx.Client(
+        base_url="https://test.example", transport=httpx.MockTransport(handler)))
+
+    api_client.log_in("demo@example.com", "secret")
+    api_client.search_services("動画")
+    api_client.list_subscriptions()
+
+    assert seen[1].headers["cookie"] == "session=test"
+    assert seen[2].headers["cookie"] == "session=test"
+    assert "authorization" not in seen[2].headers
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_http_errors_become_api_errors(monkeypatch, status):
+    monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
+    monkeypatch.setattr(api_client, "_client", httpx.Client(
+        base_url="https://test.example",
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={"error": "details"})),
+    ))
+    with pytest.raises(ApiError):
+        api_client.list_subscriptions()
+```
+
+## tests/test_dates.py
+
+```python
+"""logic/dates.py のテスト。"""
+
+from datetime import datetime
+
+from logic import dates
+
+
+def sub(joined_at, cycle="monthly", status="active", trial_end_at=None):
+    return {"joined_at": joined_at, "cycle": cycle, "status": status, "trial_end_at": trial_end_at, "amount": 1000}
+
+
+def test_monthly_next_payment():
+    s = sub("2026-09-20T21:00")
+    assert dates.next_payment_at(s, datetime(2026, 10, 5, 9, 0)) == datetime(2026, 10, 20, 21, 0)
+
+
+def test_same_day_before_and_after_time():
+    s = sub("2026-09-20T21:00")
+    assert dates.next_payment_at(s, datetime(2026, 10, 20, 20, 59)) == datetime(2026, 10, 20, 21, 0)
+    assert dates.next_payment_at(s, datetime(2026, 10, 20, 21, 0)) == datetime(2026, 11, 20, 21, 0)
+
+
+def test_month_end_is_clamped_without_drift():
+    s = sub("2026-01-31T10:00")
+    assert dates.next_payment_at(s, datetime(2026, 2, 1)) == datetime(2026, 2, 28, 10, 0)
+    assert dates.next_payment_at(s, datetime(2026, 3, 1)) == datetime(2026, 3, 31, 10, 0)
+    assert dates.next_payment_at(s, datetime(2026, 4, 1)) == datetime(2026, 4, 30, 10, 0)
+
+
+def test_august_31():
+    s = sub("2026-08-31T10:00")
+    assert dates.next_payment_at(s, datetime(2026, 9, 1)) == datetime(2026, 9, 30, 10, 0)
+    assert dates.next_payment_at(s, datetime(2026, 10, 1)) == datetime(2026, 10, 31, 10, 0)
+
+
+def test_leap_day_yearly():
+    s = sub("2024-02-29T12:00", cycle="yearly")
+    assert dates.next_payment_at(s, datetime(2024, 3, 1)) == datetime(2025, 2, 28, 12, 0)
+    assert dates.next_payment_at(s, datetime(2027, 3, 1)) == datetime(2028, 2, 29, 12, 0)
+
+
+def test_yearly_across_new_year():
+    s = sub("2025-12-15T08:00", cycle="yearly")
+    assert dates.next_payment_at(s, datetime(2026, 1, 3)) == datetime(2026, 12, 15, 8, 0)
+
+
+def test_monthly_across_new_year():
+    s = sub("2025-11-25T08:00")
+    assert dates.next_payment_at(s, datetime(2025, 12, 26)) == datetime(2026, 1, 25, 8, 0)
+
+
+def test_cancelled_has_no_payment():
+    s = sub("2026-01-10T10:00", status="cancelled")
+    assert dates.next_payment_at(s, datetime(2026, 5, 1)) is None
+    assert dates.payment_in_month(s, 2026, 5) is None
+
+
+def test_trial_uses_trial_end():
+    s = sub("2026-09-20T21:00", status="trial", trial_end_at="2026-10-20T21:00")
+    assert dates.next_payment_at(s, datetime(2026, 10, 5)) == datetime(2026, 10, 20, 21, 0)
+    assert dates.payment_in_month(s, 2026, 9) is None
+    assert dates.payment_in_month(s, 2026, 10) == datetime(2026, 10, 20, 21, 0)
+    assert dates.payment_in_month(s, 2026, 11) == datetime(2026, 11, 20, 21, 0)
+
+
+def test_payment_in_month_before_join_and_yearly():
+    monthly = sub("2026-03-10T10:00")
+    assert dates.payment_in_month(monthly, 2026, 2) is None
+    assert dates.payment_in_month(monthly, 2026, 3) == datetime(2026, 3, 10, 10, 0)
+    yearly = sub("2025-11-05T14:00", cycle="yearly")
+    assert dates.payment_in_month(yearly, 2026, 10) is None
+    assert dates.payment_in_month(yearly, 2026, 11) == datetime(2026, 11, 5, 14, 0)
+```
+
+## tests/test_local_db.py
+
+```python
+"""一時フォルダのDBを使って local_db の挙動を確認する。"""
+import local_db
+
+
+def test_replace_and_load_keeps_order(tmp_path):
+    """一覧を保存すると、API の順番どおりに読み出せる。"""
+    local_db.init_db(tmp_path / "test.db")
+    items = [
+        {"id": 5, "name": "Netflix", "status": "active"},
+        {"id": 2, "name": "Hulu", "status": "trial"},
+    ]
+    local_db.replace_subscriptions(items, "2026-10-05T12:00+09:00")
+    assert [s["id"] for s in local_db.load_subscriptions()] == [5, 2]
+    assert local_db.get_state("subscriptions_fetched_at") == "2026-10-05T12:00+09:00"
+
+
+def test_logout_keeps_settings(tmp_path):
+    """ログアウトしても年額の計上方法は残る。"""
+    local_db.init_db(tmp_path / "test.db")
+    local_db.set_state("session_cookie", "abc")
+    local_db.set_state("yearly_mode", "average")
+    local_db.clear_user_data()
+    assert local_db.get_state("session_cookie") is None
+    assert local_db.get_state("yearly_mode") == "average"
+
+
+def test_upsert_appends_new_and_keeps_existing_position(tmp_path):
+    """新しい1件は末尾に入り、既存の並び順は変わらない。"""
+    local_db.init_db(tmp_path / "test.db")
+    local_db.replace_subscriptions(
+        [{"id": 1, "name": "Netflix", "status": "active"}, {"id": 2, "name": "Hulu", "status": "active"}],
+        "2026-10-05T12:00+09:00",
+    )
+    local_db.upsert_subscription({"id": 3, "name": "Spotify", "status": "active"})
+    assert [s["id"] for s in local_db.load_subscriptions()] == [1, 2, 3]
+
+    local_db.upsert_subscription({"id": 1, "name": "Netflix", "status": "cancelled"})
+    assert [s["id"] for s in local_db.load_subscriptions()] == [1, 2, 3]
+    assert local_db.load_subscription(1)["status"] == "cancelled"
+
+
+def test_delete_subscription_removes_only_that_item(tmp_path):
+    local_db.init_db(tmp_path / "test.db")
+    local_db.replace_subscriptions(
+        [{"id": 1, "name": "Netflix", "status": "active"}, {"id": 2, "name": "Hulu", "status": "active"}],
+        "2026-10-05T12:00+09:00",
+    )
+    local_db.delete_subscription(1)
+    assert [s["id"] for s in local_db.load_subscriptions()] == [2]
+    assert local_db.load_subscription(1) is None
+
+
+def test_search_services_matches_name_or_kana(tmp_path):
+    local_db.init_db(tmp_path / "test.db")
+    local_db.replace_services([
+        {"id": 1, "name": "Netflix", "name_kana": "ネットフリックス"},
+        {"id": 2, "name": "Hulu", "name_kana": "フール"},
+    ])
+    assert [s["id"] for s in local_db.search_services("flix")] == [1]
+    assert [s["id"] for s in local_db.search_services("フール")] == [2]
+    assert local_db.search_services("存在しない") == []
+
+
+def test_schema_version_bump_resets_cache_but_not_handled_as_error(tmp_path):
+    """init_db は何度呼んでも例外にならない(2回目以降は再作成しない)。"""
+    path = tmp_path / "test.db"
+    local_db.init_db(path)
+    local_db.set_state("yearly_mode", "average")
+    local_db.init_db(path)
+    assert local_db.get_state("yearly_mode") == "average"
+```
+
+## tests/test_mobile_layout.py
+
+```python
+"""スマホ表示のロゴ・操作領域・フッター構成を確認する．"""
+from pathlib import Path
+import json
+import xml.etree.ElementTree as ET
+from types import SimpleNamespace
+import flet as ft
+import httpx
+import pytest
+import api_client
+import config
+from components.service_icon import service_icon
+from service_assets import bundled_icon, logo_catalog
+from views.home import _build_pages, home_view
+from views.register import register_view
+from ui_helpers import walk, save_button
+
+
+class PageStub:
+    width = 390
+    def update(self):
+        pass
+
+
+def test_all_catalog_images_are_valid_and_mirrored_to_server():
+    root = Path(__file__).resolve().parents[2]
+    assets = root / 'submane/src/assets/icons'
+    catalog = logo_catalog()
+    assert len(catalog) == 19
+    for slug, item in catalog.items():
+        image = assets / item['filename']
+        data = image.read_bytes()
+        assert item['source_url'].startswith('https://')
+        if image.suffix == '.png':
+            assert data.startswith(b'\x89PNG\r\n\x1a\n')
+        else:
+            assert ET.fromstring(data).tag.endswith('svg')
+        assert data == (root / 'mane_server/public/icons' / image.name).read_bytes()
+        assert bundled_icon({'slug': slug}) == 'icons/' + image.name
+        assert bundled_icon({'name': item['name']}) == 'icons/' + image.name
+
+
+def test_remote_logo_keeps_aspect_and_has_offline_fallback(monkeypatch):
+    monkeypatch.setattr(config, 'USE_DUMMY_DATA', False)
+    icon = service_icon({'name': 'Netflix', 'icon': 'https://example.com/logo.png', 'status': 'trial'})
+    image = icon.controls[0].content
+    assert image.src == 'https://example.com/logo.png'
+    assert image.fit == ft.BoxFit.CONTAIN
+    assert image.error_content.src == 'icons/netflix.png'
+    assert len(icon.controls) == 2  # 状態をロゴと別のバッジで示す．
+    unknown = service_icon({'name': '独自サービス'})
+    assert isinstance(unknown.controls[0].content, ft.Container)
+
+
+@pytest.mark.parametrize('width', [320, 390, 430])
+def test_home_has_three_columns_readable_names_and_accessible_add(width):
+    page = PageStub()
+    page.width = width
+    view = home_view(page)
+    pager = next(c for c in walk(view) if isinstance(c, ft.PageView))
+    for screen in pager.controls:
+        assert len(screen.controls) <= 4
+        for row in screen.controls:
+            assert len(row.controls) == 3
+            for tile in row.controls:
+                if tile.content:
+                    semantics = tile.content
+                    assert semantics.button and '詳細を開く' in semantics.label
+                    name = semantics.content.controls[1].content
+                    assert name.max_lines == 2
+    add = next(c for c in walk(view) if isinstance(c, ft.IconButton) and c.tooltip == 'サブスクを追加')
+    assert add.width >= 44 and add.height >= 44
+
+
+def test_registration_save_stays_outside_scrolling_fields():
+    view = register_view(PageStub(), on_back=lambda: None)
+    body, footer = view.controls
+    assert body.expand and body.scroll == ft.ScrollMode.AUTO
+    save = save_button(view)
+    assert save in list(walk(footer)) and save not in list(walk(body))
+    assert save.height >= 44 and save.expand
+    amount = next(c for c in walk(body) if isinstance(c, ft.TextField) and c.label.startswith('1回の支払額'))
+    assert any(isinstance(c, ft.Column) and amount in c.controls for c in walk(body))
+
+
+def test_common_api_preserves_server_field_errors(monkeypatch):
+    payload = {'error': {'code': 'validation_error', 'message': '入力内容を確認してください．',
+                         'details': {'custom_name': ['名称を入力してください．']}}}
+    with httpx.Client(base_url='https://example.com', transport=httpx.MockTransport(
+            lambda request: httpx.Response(422, json=payload))) as client:
+        monkeypatch.setattr(api_client, '_client', client)
+        with pytest.raises(api_client.ApiError) as info:
+            api_client._request('POST', '/api/v1/subscriptions', json={})
+    assert info.value.status_code == 422
+    assert info.value.details == payload['error']['details']
+```
+
+## tests/test_payments.py
+
+```python
+"""logic/payments.py と logic/ordering.py のテスト。"""
+
+from logic import ordering, payments
+
+SUBS = [
+    {"id": 1, "name": "月額A", "cycle": "monthly", "amount": 1000, "joined_at": "2025-01-10T10:00", "status": "active"},
+    {"id": 2, "name": "年額B", "cycle": "yearly", "amount": 12000, "joined_at": "2025-11-05T10:00", "status": "active"},
+    {"id": 3, "name": "解約C", "cycle": "monthly", "amount": 500, "joined_at": "2025-01-10T10:00", "status": "cancelled"},
+    {"id": 4, "name": "試用D", "cycle": "monthly", "amount": 2000, "joined_at": "2026-09-20T10:00", "status": "trial",
+     "trial_end_at": "2026-10-20T10:00"},
+]
+
+
+def test_billing_mode_counts_yearly_only_in_renewal_month():
+    assert payments.month_total(SUBS, 2026, 10) == 1000 + 2000
+    assert payments.month_total(SUBS, 2026, 11) == 1000 + 12000 + 2000
+
+
+def test_average_mode_splits_yearly():
+    assert payments.month_total(SUBS, 2026, 10, payments.MODE_AVERAGE) == 1000 + 1000 + 2000
+    # 入会前の月には計上しない
+    assert payments.amount_in_month(SUBS[1], 2025, 10, payments.MODE_AVERAGE) == 0
+
+
+def test_cancelled_is_excluded_and_trial_starts_at_trial_end():
+    assert payments.amount_in_month(SUBS[2], 2026, 10) == 0
+    assert payments.amount_in_month(SUBS[3], 2026, 9) == 0
+    assert payments.amount_in_month(SUBS[3], 2026, 10) == 2000
+
+
+def test_summarize():
+    result = payments.summarize(SUBS, 2026, 11)
+    assert result["total"] == 15000
+    assert result["previous_total"] == 3000
+    assert result["diff"] == 12000
+    assert [item["sub"]["id"] for item in result["items"]] == [2, 4, 1]
+    assert abs(sum(item["ratio"] for item in result["items"]) - 1.0) < 1e-9
+
+
+def test_summarize_empty_month():
+    result = payments.summarize(SUBS, 2024, 1)
+    assert result["total"] == 0 and result["items"] == [] and result["diff"] == 0
+
+
+def test_month_helpers():
+    assert payments.previous_month(2026, 1) == (2025, 12)
+    assert payments.next_month(2026, 12) == (2027, 1)
+
+
+def test_ordering_keeps_cancelled_last():
+    by_frequency = [s["id"] for s in ordering.sort_subscriptions(SUBS, ordering.ORDER_FREQUENCY)]
+    assert by_frequency == [1, 4, 2, 3]
+    by_registered = [s["id"] for s in ordering.sort_subscriptions(SUBS, ordering.ORDER_REGISTERED)]
+    assert by_registered == [1, 2, 4, 3]
+    assert ordering.count_by_status(SUBS) == {"active": 3, "trial": 1, "cancelled": 1}
+```
+
+## tests/test_shared_integration.py
+
+```python
+from ui_helpers import walk, save_button, results_column
+"""develop共通APIと石井担当画面の接続を検証する．"""
+import asyncio
+import json
+import flet as ft
+import httpx
+import api_client
+import config
+from components.status_actions import status_actions
+from views.register import register_view
+from logic.subscriptions import cancellation_patch
+
+
+class PageStub:
+    def update(self):
+        pass
+
+
+def test_registration_and_status_use_same_shared_store():
+    async def scenario():
+        saved = []
+        page = PageStub()
+        initial = len(api_client.list_subscriptions())
+        view = register_view(page, on_saved=saved.append, on_back=lambda: None)
+        fields = {c.label: c for c in walk(view) if isinstance(c, ft.TextField)}
+        fields["サービス名 *"].value = "共通APIへの登録"
+        fields["料金プラン名 *"].value = "月額"
+        fields["1回の支払額（円） *"].value = "1000"
+        await save_button(view).on_click(None)
+        assert len(api_client.list_subscriptions()) == initial + 1
+        item = api_client.get_subscription(saved[0]["id"])
+        changed = []
+        actions = status_actions(page, item, api_client, changed.append)
+        next(c for c in actions.controls if isinstance(c, ft.Checkbox)).value = True
+        await actions.controls[-1].on_click(None)
+        assert api_client.get_subscription(item["id"])["status"] == "cancelled"
+        assert changed[0]["id"] == item["id"]
+    asyncio.run(scenario())
+
+
+def test_shared_api_uses_v02_paths_payload_and_cookie(monkeypatch):
+    seen = []
+    def handler(request):
+        seen.append(request)
+        if request.url.path == "/api/v1/session":
+            return httpx.Response(200, json={"user": {"id": 1}}, headers={"set-cookie": "session_id=test; Path=/; Secure"})
+        assert request.headers["cookie"] == "session_id=test"
+        if request.method == "GET":
+            return httpx.Response(200, json={"subscriptions": [{"id": 42, "name": "試作", "joined_at": "2026-10-05T12:30+09:00", "trial_ends_at": None, "next_payment_at": "2026-11-05T12:30+09:00"}]})
+        if request.method == "POST":
+            payload = json.loads(request.content)
+            assert payload["service_id"] == 3 and payload["plan_id"] == 30
+            assert "status" not in payload and "name" not in payload
+            return httpx.Response(201, json={"id": 42, "name": "試作", **payload})
+        assert request.method == "PATCH"
+        assert json.loads(request.content) == {"status": "cancelled"}
+        return httpx.Response(200, json={"id": 42, "status": "cancelled"})
+    monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
+    with httpx.Client(base_url="https://test.example/", transport=httpx.MockTransport(handler)) as client:
+        monkeypatch.setattr(api_client, "_client", client)
+        api_client.log_in("demo@example.com", "secret")
+        item = api_client.list_subscriptions()[0]
+        assert item["joined_at"] == "2026-10-05T12:30+09:00"
+        assert item["next_payment_at"] == "2026-11-05T12:30+09:00"
+        api_client.create_subscription({"name": "試作", "plan_name": "月額", "amount": 1000, "cycle": "monthly", "status": "active", "joined_at": "2026-10-05T12:30", "service_id": 3, "plan_id": 30})
+        api_client.update_subscription(42, cancellation_patch())
+    assert [r.url.path for r in seen] == ["/api/v1/session", "/api/v1/services", "/api/v1/subscriptions", "/api/v1/subscriptions", "/api/v1/subscriptions/42"]
+
+
+
+def test_shared_views_construct_without_flet_api_errors():
+    from types import SimpleNamespace
+    from views.home import home_view
+    from views.detail import detail_view
+    from views.deadline import deadline_view
+    from views.breakdown import breakdown_view
+    class Store(dict):
+        def set(self, key, value):
+            self[key] = value
+    page = PageStub()
+    page.width = 390
+    page.route = "/detail/1"
+    page.session = SimpleNamespace(store=Store())
+    for builder in (home_view, detail_view, deadline_view, breakdown_view):
+        assert isinstance(builder(page), ft.Control)
+
+
+def test_detail_uses_server_payment_date_instead_of_recalculation():
+    from views.detail import _next_payment_text
+    value = _next_payment_text({"status": "active", "joined_at": "2026-01-01T12:00", "cycle": "monthly", "next_payment_at": "2026-11-05T12:30+09:00"})
+    assert value == "2026年11月05日"
+
+
+
+def test_deadline_handles_mixed_server_dates_and_dummy_fallback():
+    from views.deadline import deadline_view
+    api_client._dummy_subs[0]["next_payment_at"] = "2026-11-05T03:30+00:00"
+    assert isinstance(deadline_view(PageStub()), ft.Control)
+```
+
+## tests/test_storage.py
+
+```python
+"""ダミーデータに対する保存・解約・再契約の整合性と，検索結果の独立性を確認する．"""
+import api_client
+from logic.subscriptions import cancellation_patch, reactivation_patch
+
+
+def test_save_cancel_reactivate_and_reload():
+    item = api_client.create_subscription({
+        "name": "手入力", "plan_name": "年間", "cycle": "yearly",
+        "amount": "1200", "joined_at": "2026-01-31T12:00", "status": "active",
+        "join_url": "https://example.com/join", "cancel_url": "https://example.com/cancel",
+    })
+    cancelled = api_client.update_subscription(item["id"], cancellation_patch())
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["join_url"] == item["join_url"]
+    active = api_client.update_subscription(item["id"], reactivation_patch(cancelled, "2026-10-05T12:00"))
+    assert active["id"] == item["id"]
+    reloaded = api_client.list_subscriptions()
+    match = next(sub for sub in reloaded if sub["id"] == item["id"])
+    assert match["joined_at"] == "2026-10-05T12:00"
+
+
+def test_search_is_case_insensitive_and_does_not_mutate_master():
+    values = api_client.search_services("NETFLIX")
+    assert len(values) == 1
+    values[0]["name"] = "書き換え"
+    assert api_client.search_services("netflix")[0]["name"] != "書き換え"
+```
+
+## tests/test_subscriptions.py
+
+```python
+"""登録の境界値，並び順，解約・再契約で失うべき情報を検証する．"""
+import pytest
+from logic.subscriptions import (
+    ValidationError, cancellation_patch, reactivation_patch,
+    sort_subscriptions, validate_subscription, valid_url,
+)
+
+
+def record(**changes):
+    """登録可能な基本データを作る．"""
+    return {"name": "テスト", "plan_name": "月額", "amount": "1000", "cycle": "monthly",
+            "status": "active", "joined_at": "2026-01-31T12:00", **changes}
+
+
+def test_registration_normalizes_amount_and_preserves_manual_urls():
+    data = validate_subscription(record(amount="１０００", join_url="https://example.com/join"))
+    assert data["amount"] == 1000
+    assert data["join_url"] == "https://example.com/join"
+
+
+@pytest.mark.parametrize("changes,field", [
+    ({"amount": "-1"}, "amount"), ({"amount": "1.5"}, "amount"),
+    ({"amount": ""}, "amount"), ({"amount": "1000000000"}, "amount"),
+    ({"name": " "}, "name"), ({"plan_name": ""}, "plan_name"),
+    ({"joined_at": "2026-02-29T12:00"}, "joined_at"),
+    ({"join_url": "javascript:alert(1)"}, "join_url"),
+    ({"cancel_url": "https://user:pass@example.com"}, "cancel_url"),
+    ({"cycle": "weekly"}, "cycle"), ({"status": "unknown"}, "status"),
+    ({"status": "trial", "trial_ends_at": ""}, "trial_ends_at"),
+    ({"status": "trial", "trial_ends_at": "2026-01-30T12:00"}, "trial_ends_at"),
+])
+def test_invalid_registration(changes, field):
+    with pytest.raises(ValidationError) as raised:
+        validate_subscription(record(**changes))
+    assert field in raised.value.errors
+
+
+def test_zero_yen_and_leap_day_are_valid():
+    assert validate_subscription(record(amount="0", joined_at="2028-02-29T12:00"))["amount"] == 0
+
+
+def test_trial_records_ending_and_cancellation_discards_it():
+    data = validate_subscription(record(status="trial", trial_ends_at="2026-02-28T12:00"))
+    assert data["trial_ends_at"] == "2026-02-28T12:00"
+    cancelled = validate_subscription({**data, **cancellation_patch()})
+    assert cancelled["trial_ends_at"] == ""
+    assert cancelled["cancel_url"] == data["cancel_url"]
+
+
+def test_reactivation_replaces_joined_date_and_clears_old_payment():
+    patch = reactivation_patch(record(status="cancelled", next_payment_at="2026-02-28T12:00"), "2026-10-05T12:00")
+    assert patch == {"status": "active", "joined_at": "2026-10-05T12:00"}
+
+
+def test_sort_keeps_cancelled_last_and_does_not_mutate_input():
+    items = [record(id="cancelled", status="cancelled"), record(id="year", cycle="yearly"), record(id="month")]
+    assert [item["id"] for item in sort_subscriptions(items)] == ["month", "year", "cancelled"]
+    assert [item["id"] for item in sort_subscriptions(items, "registered")] == ["year", "month", "cancelled"]
+    assert [item["id"] for item in items] == ["cancelled", "year", "month"]
+
+
+def test_deadline_sort_handles_unknown_dates_and_cancelled():
+    items = [record(id="unknown"), record(id="later", next_payment_at="2026-12-01T00:00+09:00"),
+             record(id="trial", status="trial", trial_ends_at="2026-10-10T00:00"),
+             record(id="cancelled", status="cancelled", next_payment_at="2026-01-01T00:00")]
+    assert [item["id"] for item in sort_subscriptions(items, "deadline")] == ["trial", "later", "unknown", "cancelled"]
+
+
+@pytest.mark.parametrize("url", ["https://example.com", "http://example.com/path", ""])
+def test_valid_url(url):
+    assert valid_url(url)
+```
+
+## tests/test_ui_workflow.py
+
+```python
+from ui_helpers import walk, save_button, results_column
+"""Fletコントロールの生成と，画面イベントから保存までの流れを確認する．"""
+import asyncio
+import flet as ft
+from api_client import ApiClient
+from components.service_icon import service_icon
+from components.status_actions import status_actions
+from views.register import register_view
+
+
+
+class PageStub:
+    """画面イベントの検証に必要な更新・遷移を記録する．"""
+
+    def update(self):
+        """描画通信は行わない．"""
+
+    def navigate(self, route):
+        """検証中の遷移先を記録する．"""
+        self.route = route
+
+
+def test_registration_search_plan_and_save(tmp_path):
+    async def scenario():
+        page = PageStub()
+        client = ApiClient(tmp_path / "records.json", use_dummy=True)
+        saved = []
+        view = register_view(page, client, on_saved=saved.append)
+        fields = {control.label: control for control in walk(view) if isinstance(control, (ft.TextField, ft.Dropdown))}
+        search_button = next(control for control in walk(view) if isinstance(control, ft.Button) and control.content == "定番サービスを表示・検索")
+        await search_button.on_click(None)
+        results = results_column(view)
+        next(c for c in results.controls if c.content.controls[1].value == "動画サービス（デモ）").on_click(None)
+        assert fields["サービス名 *"].value == "動画サービス（デモ）"
+        assert int(fields["1回の支払額（円） *"].value) >= 0
+        fields["定番サービスのプラン"].value = "1"
+        fields["定番サービスのプラン"].on_select(None)
+        assert fields["料金プラン名 *"].value
+        save = next(control for control in walk(view) if isinstance(control, ft.Button) and control.content == "この内容で登録する")
+        fields["1回の支払額（円） *"].value = "-1"
+        await save.on_click(None)
+        assert fields["1回の支払額（円） *"].error and not saved
+        fields["1回の支払額（円） *"].value = "10000"
+        await save.on_click(None)
+        assert len(saved) == 1 and saved[0]["amount"] == 10000
+        assert save.disabled and not fields["サービス名 *"].disabled
+        await save.on_click(None)
+        assert len(saved) == 1
+    asyncio.run(scenario())
+
+
+def test_status_requires_confirmation_and_preserves_id(tmp_path):
+    async def scenario():
+        page = PageStub()
+        client = ApiClient(tmp_path / "records.json", use_dummy=True)
+        item = await client.create_subscription({"name": "試作", "plan_name": "月額", "amount": "1000",
+                    "cycle": "monthly", "status": "active", "joined_at": "2026-01-01T12:00"})
+        changed = []
+        view = status_actions(page, item, client, changed.append)
+        save = view.controls[-1]
+        await save.on_click(None)
+        assert not changed
+        check = next(control for control in walk(view) if isinstance(control, ft.Checkbox))
+        check.value = True
+        await save.on_click(None)
+        assert changed[0]["status"] == "cancelled"
+        view = status_actions(page, changed[0], client, changed.append)
+        joined = next(control for control in walk(view) if isinstance(control, ft.TextField))
+        joined.value = "invalid"
+        next(control for control in walk(view) if isinstance(control, ft.Checkbox)).value = True
+        await view.controls[-1].on_click(None)
+        assert joined.error and len(changed) == 1
+        joined.value = "2026-10-05T12:00"
+        await view.controls[-1].on_click(None)
+        assert changed[-1]["status"] == "active" and changed[-1]["id"] == item["id"]
+    asyncio.run(scenario())
+
+
+def test_preview_and_icons_construct_with_pinned_flet(tmp_path):
+    page = PageStub()
+    item = {"id": "demo", "name": "試作", "plan_name": "月額", "amount": 1000,
+            "cycle": "monthly", "status": "active", "joined_at": "2026-01-01T12:00"}
+    assert isinstance(service_icon(item), ft.Stack)
+    assert isinstance(service_icon({**item, "status": "trial"}), ft.Stack)
+    assert isinstance(service_icon({**item, "status": "cancelled", "icon": "https://example.com/icon.png"}), ft.Stack)
+
+
+
+def test_api_field_error_is_shown_and_input_is_preserved():
+    from api_client import ApiError
+    class FailingApi:
+        async def create_subscription(self, data):
+            raise ApiError("入力内容に誤りがあります", status_code=422,
+                           details={"custom_name": ["名称を確認してください"]})
+    async def scenario():
+        view = register_view(PageStub(), FailingApi())
+        fields = {control.label: control for control in walk(view) if isinstance(control, ft.TextField)}
+        fields["サービス名 *"].value = "試作"
+        fields["料金プラン名 *"].value = "月額"
+        fields["1回の支払額（円） *"].value = "1000"
+        save = save_button(view)
+        await save.on_click(None)
+        assert fields["サービス名 *"].error == "名称を確認してください"
+        assert fields["サービス名 *"].value == "試作" and not save.disabled
+    asyncio.run(scenario())
+
+
+def test_delayed_search_does_not_replace_manual_entry():
+    class DelayedApi:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.finish = asyncio.Event()
+        async def search_services(self, keyword):
+            self.started.set()
+            await self.finish.wait()
+            return [{"id": 3, "name": "古い結果"}]
+    async def scenario():
+        api = DelayedApi()
+        view = register_view(PageStub(), api)
+        search = next(c for c in walk(view) if isinstance(c, ft.Button) and c.content == "定番サービスを表示・検索")
+        pending = asyncio.create_task(search.on_click(None))
+        await api.started.wait()
+        next(c for c in walk(view) if isinstance(c, ft.TextButton) and c.content == "定番にないサービスを手入力する").on_click(None)
+        api.finish.set()
+        await pending
+        results = results_column(view)
+        assert results.controls == []
+    asyncio.run(scenario())
+
+
+def test_preview_accepts_null_trial_end_and_datetime_joined(tmp_path):
+    from datetime import datetime
+    item = {"id": 42, "name": "試作", "plan_name": "月額", "amount": 1000,
+            "cycle": "monthly", "status": "active", "joined_at": datetime(2026, 10, 5, 12),
+            "trial_ends_at": None, "cancel_url": None}
+    assert service_icon(item)
+
+
+
+def test_icon_color_stays_with_subscription_when_order_changes():
+    item = {"id": 42, "name": "試作", "status": "active"}
+    other = {"id": 50, "name": "別契約", "status": "active"}
+    initial = {value["id"]: service_icon(value).controls[0].bgcolor for value in [item, other]}
+    reordered = {value["id"]: service_icon(value).controls[0].bgcolor for value in [other, item]}
+    assert initial == reordered
+```
+
+## tests/ui_helpers.py
+
+```python
+"""入れ子になったフォームをユーザが操作する項目で探す．"""
+import flet as ft
+
+
+def walk(root):
+    yield root
+    content = getattr(root, "content", None)
+    if isinstance(content, ft.Control):
+        yield from walk(content)
+    for control in getattr(root, "controls", []) or []:
+        yield from walk(control)
+
+
+def save_button(view):
+    return next(c for c in walk(view) if isinstance(c, ft.Button) and c.content == "この内容で登録する")
+
+
+def results_column(view):
+    return next(c for c in walk(view) if getattr(c, "key", None) == "service-search-results")
 ```
