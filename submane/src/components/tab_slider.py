@@ -27,7 +27,7 @@ class TabSlider:
         generation = self.generation
         if route == self.route:
             self.root.controls = [self._layer(content)]
-            return
+            return self.root.controls[0]
         direction = 1 if navigation.TAB_ROUTES.index(route) > navigation.TAB_ROUTES.index(self.route) else -1
         self.route = route
         outgoing = self.root.controls[-1]
@@ -37,6 +37,7 @@ class TabSlider:
         self.root.controls = [outgoing, incoming]
         self.page.update()
         self.page.run_task(self._animate, outgoing, incoming, direction, generation)
+        return incoming
 
     async def _animate(self, outgoing, incoming, direction, generation):
         # 初期位置を描画してから，次のフレームで移動を開始する．

@@ -1815,7 +1815,7 @@ class TabSlider:
         generation = self.generation
         if route == self.route:
             self.root.controls = [self._layer(content)]
-            return
+            return self.root.controls[0]
         direction = 1 if navigation.TAB_ROUTES.index(route) > navigation.TAB_ROUTES.index(self.route) else -1
         self.route = route
         outgoing = self.root.controls[-1]
@@ -1825,6 +1825,7 @@ class TabSlider:
         self.root.controls = [outgoing, incoming]
         self.page.update()
         self.page.run_task(self._animate, outgoing, incoming, direction, generation)
+        return incoming
 
     async def _animate(self, outgoing, incoming, direction, generation):
         # 初期位置を描画してから，次のフレームで移動を開始する．
@@ -2520,6 +2521,7 @@ def reactivation_patch(subscription, joined_at):
 ヘッダーと下部タブはここで全画面に付けるので、各画面は中身だけを返せばよい。
 """
 
+import asyncio
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -2569,6 +2571,11 @@ def _resolve(route: str) -> Screen | None:
     return SCREENS.get(route)
 
 
+def _loading() -> ft.Control:
+    """通信中も操作できるように，取得先の画面にローディングを表示する．"""
+    return ft.Container(expand=True, alignment=ft.Alignment.CENTER, content=ft.ProgressRing())
+
+
 def _shell(route: str, header: ft.Control, content: ft.Control, footer: ft.Control | None) -> ft.View:
     """ヘッダー + 中身 + 下部タブ を1つの画面(View)にまとめる。"""
     controls = [header, ft.Container(content=content, expand=True, padding=ft.Padding.symmetric(horizontal=theme.GUTTER, vertical=16))]
@@ -2610,65 +2617,70 @@ def main(page: ft.Page) -> None:
         window.width = theme.BASE_WIDTH
         window.height = theme.BASE_HEIGHT
 
-    def build_content(screen: Screen) -> ft.Control:
-        """画面の中身を作る。画面側で想定外のエラーが起きてもアプリ全体は止めない。"""
+    async def build_content(screen: Screen) -> ft.Control:
+        """同期APIを別スレッドで呼び，画面遷移とローディングを止めない．"""
         try:
-            return screen.view(page)
-        except Exception:  # noqa: BLE001 開発中に原因を追えるよう、内容はコンソールに出す
+            return await asyncio.to_thread(screen.view, page)
+        except Exception:
             traceback.print_exc()
-            return feedback.error_panel(page, "画面の表示中にエラーが起きました。")
+            return feedback.error_panel(page, "画面の表示中にエラーが起きました．")
 
     tab_state = {"view": None, "slider": None, "footer": None}
+    route_version = 0
 
     def clear_tab_state():
         if tab_state["slider"]:
             tab_state["slider"].cancel()
         tab_state.update(view=None, slider=None, footer=None)
 
-    def show_route(e=None) -> None:
-        """今のルートに合わせて画面を組み立てる。"""
+    async def show_route(e=None) -> None:
+        """Viewを維持してスライドし，古い通信結果は反映しない．"""
+        nonlocal route_version
         route = getattr(e, "route", None) or page.route or navigation.HOME
         screen = _resolve(route)
         if screen is None:
             navigation.go(page, navigation.HOME)
             return
+        route_version += 1
+        version = route_version
 
-        # 未ログインなら会員登録・ログイン画面だけを出す
         if not api_client.is_logged_in():
             clear_tab_state()
             page.views.clear()
             if route != navigation.ACCOUNT:
                 navigation.go(page, navigation.ACCOUNT)
                 return
-            header = app_header(page, show_actions=False)
-            page.views.append(_shell(route, header, build_content(screen), footer=None))
-            page.update()
-            return
-
-        if route in navigation.TAB_ROUTES:
+            target = ft.Container(content=_loading(), expand=True)
+            page.views.append(_shell(route, app_header(page, show_actions=False), target, footer=None))
+        elif route in navigation.TAB_ROUTES:
             navigation.remember_tab(page, route)
-            content = build_content(screen)
             if tab_state["view"] is not None and len(page.views) == 1 and page.views[0] is tab_state["view"]:
-                # ViewとStackを維持し，ヘッダー・下部タブを固定したまま中身だけを動かす．
                 tab_state["view"].route = route
                 tab_state["footer"].content = tab_bar(page, route)
-                tab_state["slider"].show(route, content)
+                target = tab_state["slider"].show(route, _loading())
             else:
                 clear_tab_state()
                 page.views.clear()
-                slider = TabSlider(page, route, content)
+                slider = TabSlider(page, route, _loading())
                 footer = ft.Container(content=tab_bar(page, route))
                 view = _shell(route, app_header(page), slider.root, footer)
                 tab_state.update(view=view, slider=slider, footer=footer)
                 page.views.append(view)
+                target = slider.root.controls[0]
         else:
             clear_tab_state()
             page.views.clear()
-            # タブ画面の上に重ねる。端末の「戻る」で元のタブ画面に戻れる
             base = navigation.last_tab(page)
             page.views.append(_shell(base, app_header(page), ft.Container(), tab_bar(page, base)))
             header = app_header(page, title=screen.title, show_back=True, show_actions=False)
-            page.views.append(_shell(route, header, build_content(screen), tab_bar(page, None)))
+            target = ft.Container(content=_loading(), expand=True)
+            page.views.append(_shell(route, header, target, tab_bar(page, None)))
+
+        page.update()
+        content = await build_content(screen)
+        if version != route_version:
+            return
+        target.content = content
         page.update()
 
     def on_view_pop(e) -> None:
@@ -2678,7 +2690,7 @@ def main(page: ft.Page) -> None:
     navigation.set_reload_handler(page, show_route)
     page.on_route_change = show_route
     page.on_view_pop = on_view_pop
-    show_route()
+    page.run_task(show_route)
 
 
 if __name__ == "__main__":
@@ -2736,10 +2748,14 @@ def go_back(page: ft.Page) -> None:
 
 
 def reload(page: ft.Page) -> None:
-    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。"""
+    """今の画面を作り直す(通信エラー後の「もう一度読み込む」など)。
+
+    main.py の show_route は非同期(通信中はローディング表示を出す)なので、
+    ここで直接呼ばず page.run_task に渡して実行する。
+    """
     handler = page.session.store.get(_RELOAD_KEY)
     if handler:
-        handler()
+        page.run_task(handler)
 
 
 def get_sub_id(page: ft.Page) -> str | None:
@@ -2895,6 +2911,8 @@ def yen(amount: int) -> str:
 未ログインなら新規登録・ログインを切り替えられるフォームを返す。
 """
 
+import asyncio
+
 import flet as ft
 
 import api_client
@@ -2915,16 +2933,20 @@ def _signed_in_view(page: ft.Page) -> ft.Control:
     """ログイン済みのときの中身。"""
     email = api_client.get_user_email() or "ダミーデータでログイン中"
 
-    def log_out(event):
-        api_client.log_out()
+    async def log_out(event):
+        log_out_button.disabled = True
+        log_out_button.content = ft.ProgressRing(width=16, height=16)
+        page.update()
+        await asyncio.to_thread(api_client.log_out)
         navigation.reload(page)
 
+    log_out_button = ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN)
     return ft.Column(
         spacing=16,
         controls=[
             theme.text("ログイン中", size=26, weight="bold"),
             theme.text(email, size=14, color=theme.INK_SUB),
-            ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN),
+            log_out_button,
         ],
     )
 
@@ -2957,7 +2979,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
 
     toggle_button.on_click = toggle_mode
 
-    def submit(event):
+    async def submit(event):
         if state["busy"]:
             return
         email_field.error = None
@@ -2975,13 +2997,15 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
 
         state["busy"] = True
         submit_button.disabled = True
+        is_signup = state["mode"] == "signup"
+        submit_button.content = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=8, controls=[
+            ft.ProgressRing(width=16, height=16, color=theme.ON_ACCENT), ft.Text("送信しています…"),
+        ])
         toggle_button.disabled = True
         page.update()
         try:
-            if state["mode"] == "signup":
-                api_client.sign_up(email_field.value.strip(), password_field.value)
-            else:
-                api_client.log_in(email_field.value.strip(), password_field.value)
+            action = api_client.sign_up if is_signup else api_client.log_in
+            await asyncio.to_thread(action, email_field.value.strip(), password_field.value)
         except ApiError as error:
             message.value = str(error)
         else:
@@ -2990,6 +3014,7 @@ def _sign_in_view(page: ft.Page) -> ft.Control:
         finally:
             state["busy"] = False
             submit_button.disabled = False
+            submit_button.content = "新規登録" if is_signup else "ログイン"
             toggle_button.disabled = False
             page.update()
 
@@ -3359,6 +3384,8 @@ def deadline_view(page: ft.Page) -> ft.Control:
 解約・再契約の確認フローは components.status_actions に委ねる(登録画面とは独立して作られた部品)。
 """
 
+import asyncio
+
 import flet as ft
 
 import api_client
@@ -3386,19 +3413,22 @@ def detail_view(page: ft.Page) -> ft.Control:
         return feedback.message_panel(str(error), icon=ft.Icons.ERROR_OUTLINE)
 
     def open_delete_dialog(event):
-        def confirm_delete(event):
-            api_client.delete_subscription(sub_id)
+        async def confirm_delete(event):
+            cancel_button.disabled = True
+            delete_button.disabled = True
+            delete_button.content = ft.ProgressRing(width=16, height=16, color=theme.DANGER)
+            dialog.update()
+            await asyncio.to_thread(api_client.delete_subscription, sub_id)
             page.pop_dialog()
             page.show_dialog(ft.SnackBar(ft.Text("削除しました．")))
             navigation.go_back(page)
 
+        cancel_button = ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog())
+        delete_button = ft.TextButton("削除", on_click=confirm_delete)
         dialog = ft.AlertDialog(
             title=ft.Text("サブスクの削除"),
             content=ft.Text(f"「{item.get('name')}」を一覧から削除してもよろしいですか．"),
-            actions=[
-                ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog()),
-                ft.TextButton("削除", on_click=confirm_delete),
-            ],
+            actions=[cancel_button, delete_button],
         )
         page.show_dialog(dialog)
 
@@ -4681,23 +4711,55 @@ def test_tab_slides_in_both_directions_and_discards_old_tasks():
 
 
 def test_route_changes_reuse_tab_view_and_return_from_registration(monkeypatch):
-    monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
-    for route in navigation.TAB_ROUTES:
-        monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
-    page = PageStub()
-    app.main(page)
-    original = page.views[0]
-    for route in [navigation.BREAKDOWN, navigation.DEADLINE, navigation.HOME]:
-        page.route = route
-        page.on_route_change(SimpleNamespace(route=route))
-        assert page.views[0] is original and original.route == route
-        assert navigation.last_tab(page) == route
-    page.route = navigation.REGISTER
-    page.on_route_change(SimpleNamespace(route=page.route))
-    assert len(page.views) == 2
-    page.route = navigation.HOME
-    page.on_route_change(SimpleNamespace(route=page.route))
-    assert len(page.views) == 1 and page.views[0] is not original
+    async def scenario():
+        monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
+        for route in navigation.TAB_ROUTES:
+            monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
+        page = PageStub()
+        app.main(page)
+        handler, args = page.tasks.pop(0)
+        await handler(*args)
+        original = page.views[0]
+        for route in [navigation.BREAKDOWN, navigation.DEADLINE, navigation.HOME]:
+            page.route = route
+            await page.on_route_change(SimpleNamespace(route=route))
+            assert page.views[0] is original and original.route == route
+            assert navigation.last_tab(page) == route
+        page.route = navigation.REGISTER
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        assert len(page.views) == 2
+        page.route = navigation.HOME
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        assert len(page.views) == 1 and page.views[0] is not original
+    asyncio.run(scenario())
+
+
+def test_slow_screen_does_not_replace_a_newer_route(monkeypatch):
+    import threading
+    async def scenario():
+        monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
+        started, release = threading.Event(), threading.Event()
+        def slow_screen(page):
+            started.set()
+            release.wait(timeout=3)
+            return ft.Text('old slow screen')
+        for route in navigation.TAB_ROUTES:
+            monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
+        monkeypatch.setitem(app.SCREENS, navigation.BREAKDOWN, app.Screen(slow_screen))
+        page = PageStub()
+        app.main(page)
+        handler, args = page.tasks.pop(0)
+        await handler(*args)
+        page.route = navigation.BREAKDOWN
+        pending = asyncio.create_task(page.on_route_change(SimpleNamespace(route=page.route)))
+        assert await asyncio.to_thread(started.wait, 1)
+        page.route = navigation.DEADLINE
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        release.set()
+        await pending
+        stack = next(c for c in walk(page.views[0]) if isinstance(c, ft.Stack))
+        assert stack.controls[-1].content.value == navigation.DEADLINE
+    asyncio.run(scenario())
 ```
 
 ## tests/test_ui_workflow.py

@@ -108,20 +108,52 @@ def test_tab_slides_in_both_directions_and_discards_old_tasks():
 
 
 def test_route_changes_reuse_tab_view_and_return_from_registration(monkeypatch):
-    monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
-    for route in navigation.TAB_ROUTES:
-        monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
-    page = PageStub()
-    app.main(page)
-    original = page.views[0]
-    for route in [navigation.BREAKDOWN, navigation.DEADLINE, navigation.HOME]:
-        page.route = route
-        page.on_route_change(SimpleNamespace(route=route))
-        assert page.views[0] is original and original.route == route
-        assert navigation.last_tab(page) == route
-    page.route = navigation.REGISTER
-    page.on_route_change(SimpleNamespace(route=page.route))
-    assert len(page.views) == 2
-    page.route = navigation.HOME
-    page.on_route_change(SimpleNamespace(route=page.route))
-    assert len(page.views) == 1 and page.views[0] is not original
+    async def scenario():
+        monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
+        for route in navigation.TAB_ROUTES:
+            monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
+        page = PageStub()
+        app.main(page)
+        handler, args = page.tasks.pop(0)
+        await handler(*args)
+        original = page.views[0]
+        for route in [navigation.BREAKDOWN, navigation.DEADLINE, navigation.HOME]:
+            page.route = route
+            await page.on_route_change(SimpleNamespace(route=route))
+            assert page.views[0] is original and original.route == route
+            assert navigation.last_tab(page) == route
+        page.route = navigation.REGISTER
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        assert len(page.views) == 2
+        page.route = navigation.HOME
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        assert len(page.views) == 1 and page.views[0] is not original
+    asyncio.run(scenario())
+
+
+def test_slow_screen_does_not_replace_a_newer_route(monkeypatch):
+    import threading
+    async def scenario():
+        monkeypatch.setattr(app.local_db, 'init_db', lambda: None)
+        started, release = threading.Event(), threading.Event()
+        def slow_screen(page):
+            started.set()
+            release.wait(timeout=3)
+            return ft.Text('old slow screen')
+        for route in navigation.TAB_ROUTES:
+            monkeypatch.setitem(app.SCREENS, route, app.Screen(lambda p, route=route: ft.Text(route)))
+        monkeypatch.setitem(app.SCREENS, navigation.BREAKDOWN, app.Screen(slow_screen))
+        page = PageStub()
+        app.main(page)
+        handler, args = page.tasks.pop(0)
+        await handler(*args)
+        page.route = navigation.BREAKDOWN
+        pending = asyncio.create_task(page.on_route_change(SimpleNamespace(route=page.route)))
+        assert await asyncio.to_thread(started.wait, 1)
+        page.route = navigation.DEADLINE
+        await page.on_route_change(SimpleNamespace(route=page.route))
+        release.set()
+        await pending
+        stack = next(c for c in walk(page.views[0]) if isinstance(c, ft.Stack))
+        assert stack.controls[-1].content.value == navigation.DEADLINE
+    asyncio.run(scenario())
