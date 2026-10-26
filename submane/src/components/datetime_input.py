@@ -2,6 +2,7 @@
 from datetime import datetime
 
 import flet as ft
+import theme
 
 from logic.subscriptions import JST, parse_time
 
@@ -30,20 +31,38 @@ def attach_datetime_picker(page, field, *, minimum=None):
             if date is None:
                 return
 
-            def time_selected(event):
-                time = event.control.value
-                if time is None or field.disabled:
+            initial = datetime.combine(date.date(), seed.time())
+            earliest = lower if date.date() == lower.date() else None
+            if earliest is not None:
+                initial = max(initial, earliest)
+            selected = {"value": initial}
+
+            def time_changed(event):
+                # スワイプ中は仮選択だけを更新し，登録欄にはまだ反映しない．
+                if event.control.value is not None:
+                    selected["value"] = event.control.value
+
+            def confirm_time(event):
+                if field.disabled:
                     return
-                field.value = datetime.combine(date.date(), time).strftime("%Y-%m-%dT%H:%M")
+                field.value = datetime.combine(date.date(), selected["value"].time()).strftime("%Y-%m-%dT%H:%M")
                 field.error = None
+                page.pop_dialog()
                 page.update()
 
-            page.show_dialog(ft.TimePicker(
-                value=seed.time(), locale=locale,
-                hour_format=ft.TimePickerHourFormat.H24,
-                entry_mode=ft.TimePickerEntryMode.INPUT,
-                help_text="時刻を選択（日本時間）", hour_label_text="時", minute_label_text="分",
-                confirm_text="確定", cancel_text="キャンセル", on_change=time_selected))
+            wheel = ft.CupertinoDatePicker(
+                value=initial, locale=locale, date_picker_mode=ft.CupertinoDatePickerMode.TIME,
+                use_24h_format=True, minute_interval=1, first_date=earliest,
+                item_extent=40, on_change=time_changed)
+            page.show_dialog(ft.AlertDialog(
+                modal=True, title=theme.text("時刻を選択", size=18, weight="bold"),
+                inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
+                content_padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                content=ft.Column(width=240, tight=True, spacing=8, controls=[
+                    theme.text("時・分を上下にスワイプ（日本時間）", size=12, color=theme.INK_SUB),
+                    ft.Container(height=200, content=wheel)]),
+                actions=[ft.TextButton("キャンセル", height=44, on_click=lambda e: page.pop_dialog()),
+                         ft.TextButton("確定", height=44, on_click=confirm_time)]))
 
         page.show_dialog(ft.DatePicker(
             value=seed, first_date=lower.date(), last_date=datetime(2100, 12, 31),
