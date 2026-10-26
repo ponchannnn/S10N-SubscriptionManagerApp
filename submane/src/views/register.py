@@ -8,6 +8,7 @@ import navigation
 from api_client import ApiError
 from logic.api_bridge import call_api
 from components.service_icon import service_icon
+from components.datetime_input import attach_datetime_picker
 from logic.subscriptions import JST, CYCLE_LABELS, STATUS_LABELS, ValidationError, validate_subscription
 
 
@@ -42,6 +43,9 @@ def register_view(page, api=None, on_saved=None, on_back=None):
                                     min_lines=2, max_lines=4, max_length=1000,
                                     helper="例：メールアドレスとパスワードの準備が必要．パスワード自体は入力しないでください．"),
     }
+
+    attach_datetime_picker(page, fields["joined_at"])
+    attach_datetime_picker(page, fields["trial_ends_at"], minimum=lambda: fields["joined_at"].value)
 
     def status_changed(event):
         """無料トライアルを選択したときだけ終了日時を表示する．"""
