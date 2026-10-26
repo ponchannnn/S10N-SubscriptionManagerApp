@@ -21,6 +21,7 @@ import theme
 from components import feedback
 from components.app_header import app_header
 from components.tab_bar import tab_bar
+from components.tab_slider import TabSlider
 from views.account import account_view
 from views.breakdown import breakdown_view
 from views.deadline import deadline_view
@@ -104,6 +105,13 @@ def main(page: ft.Page) -> None:
             traceback.print_exc()
             return feedback.error_panel(page, "画面の表示中にエラーが起きました。")
 
+    tab_state = {"view": None, "slider": None, "footer": None}
+
+    def clear_tab_state():
+        if tab_state["slider"]:
+            tab_state["slider"].cancel()
+        tab_state.update(view=None, slider=None, footer=None)
+
     def show_route(e=None) -> None:
         """今のルートに合わせて画面を組み立てる。"""
         route = getattr(e, "route", None) or page.route or navigation.HOME
@@ -112,10 +120,10 @@ def main(page: ft.Page) -> None:
             navigation.go(page, navigation.HOME)
             return
 
-        page.views.clear()
-
         # 未ログインなら会員登録・ログイン画面だけを出す
         if not api_client.is_logged_in():
+            clear_tab_state()
+            page.views.clear()
             if route != navigation.ACCOUNT:
                 navigation.go(page, navigation.ACCOUNT)
                 return
@@ -126,8 +134,23 @@ def main(page: ft.Page) -> None:
 
         if route in navigation.TAB_ROUTES:
             navigation.remember_tab(page, route)
-            page.views.append(_shell(route, app_header(page), build_content(screen), tab_bar(page, route)))
+            content = build_content(screen)
+            if tab_state["view"] is not None and len(page.views) == 1 and page.views[0] is tab_state["view"]:
+                # ViewとStackを維持し，ヘッダー・下部タブを固定したまま中身だけを動かす．
+                tab_state["view"].route = route
+                tab_state["footer"].content = tab_bar(page, route)
+                tab_state["slider"].show(route, content)
+            else:
+                clear_tab_state()
+                page.views.clear()
+                slider = TabSlider(page, route, content)
+                footer = ft.Container(content=tab_bar(page, route))
+                view = _shell(route, app_header(page), slider.root, footer)
+                tab_state.update(view=view, slider=slider, footer=footer)
+                page.views.append(view)
         else:
+            clear_tab_state()
+            page.views.clear()
             # タブ画面の上に重ねる。端末の「戻る」で元のタブ画面に戻れる
             base = navigation.last_tab(page)
             page.views.append(_shell(base, app_header(page), ft.Container(), tab_bar(page, base)))
