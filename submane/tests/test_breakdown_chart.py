@@ -3,6 +3,7 @@ import flet as ft
 import flet_charts as fch
 
 import api_client
+import theme
 from ui_helpers import walk
 from views.breakdown import breakdown_view
 
@@ -71,3 +72,37 @@ def test_hidden_ids_are_saved_and_restored():
     assert api_client.get_chart_hidden() == {"1", "abc"}
     api_client.set_chart_hidden(set())
     assert api_client.get_chart_hidden() == set()
+
+
+def _tooltip(view):
+    return next(c for c in walk(view) if isinstance(c, ft.Container) and c.bgcolor == theme.INK)
+
+
+def test_touching_a_slice_shows_its_name_price_and_share():
+    view = breakdown_view(PageStub())
+    pie = _pie(view)
+    tooltip = _tooltip(view)
+    assert tooltip.visible is False
+
+    pie.on_event(fch.PieChartEvent("event", pie, type=fch.ChartEventType.PAN_DOWN,
+        section_index=0, local_x=40, local_y=60))
+
+    title, detail = tooltip.content.controls
+    assert tooltip.visible is True
+    assert title.value  # サービス名が入っている
+    assert theme.yen(pie.sections[0].value) in detail.value
+    assert detail.value.endswith("%")
+
+
+def test_releasing_the_touch_hides_the_tooltip():
+    view = breakdown_view(PageStub())
+    pie = _pie(view)
+    tooltip = _tooltip(view)
+
+    pie.on_event(fch.PieChartEvent("event", pie, type=fch.ChartEventType.PAN_DOWN,
+        section_index=0, local_x=40, local_y=60))
+    assert tooltip.visible is True
+
+    pie.on_event(fch.PieChartEvent("event", pie, type=fch.ChartEventType.PAN_END,
+        section_index=0, local_x=40, local_y=60))
+    assert tooltip.visible is False

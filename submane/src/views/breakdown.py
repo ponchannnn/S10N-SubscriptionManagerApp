@@ -43,8 +43,22 @@ def _cycle_text(sub: dict, mode: str) -> str:
     return f"{plan} / {cycle}" if plan and plan not in ("月額プラン", "年額プラン") else cycle
 
 
-def _pie(items: list[dict], colors: list[str]) -> ft.Control:
-    """サービス別の支出割合の円グラフを返す。割合はグラフに出す items の合計に対して計算する。"""
+_TOUCH_SHOW = {
+    fch.ChartEventType.PAN_DOWN, fch.ChartEventType.PAN_START, fch.ChartEventType.PAN_UPDATE,
+    fch.ChartEventType.TAP_DOWN, fch.ChartEventType.LONG_PRESS_START, fch.ChartEventType.LONG_PRESS_MOVE_UPDATE,
+}
+_TOUCH_HIDE = {
+    fch.ChartEventType.PAN_END, fch.ChartEventType.PAN_CANCEL, fch.ChartEventType.TAP_UP,
+    fch.ChartEventType.TAP_CANCEL, fch.ChartEventType.LONG_PRESS_END, fch.ChartEventType.POINTER_EXIT,
+}
+
+
+def _pie(page: ft.Page, items: list[dict], colors: list[str]) -> ft.Control:
+    """サービス別の支出割合の円グラフを返す。割合はグラフに出す items の合計に対して計算する。
+
+    扇が細いと%の文字が収まらないので、指で触れている間はその区切りの
+    サービス名・金額・%を吹き出しで表示する(fl_chart のタッチイベントを使う)。
+    """
     title_style = ft.TextStyle(size=12, color=theme.ON_ACCENT, font_family=theme.FONT_BOLD)
     chart_total = sum(item["amount"] for item in items)
 
@@ -61,9 +75,38 @@ def _pie(items: list[dict], colors: list[str]) -> ft.Control:
         )
         for index, item in enumerate(items)
     ]
+
+    tooltip_title = theme.text("", size=12, weight="bold", color=theme.ON_ACCENT)
+    tooltip_detail = theme.text("", size=11, color=theme.ON_ACCENT)
+    tooltip = ft.Container(
+        visible=False,
+        left=0,
+        top=0,
+        bgcolor=theme.INK,
+        border_radius=8,
+        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+        content=ft.Column(spacing=2, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[tooltip_title, tooltip_detail]),
+    )
+
+    def on_chart_event(e: fch.PieChartEvent) -> None:
+        index = e.section_index
+        if e.type in _TOUCH_SHOW and index is not None and 0 <= index < len(items):
+            item = items[index]
+            tooltip_title.value = item["sub"]["name"]
+            tooltip_detail.value = f"{theme.yen(item['amount'])}・{round(share(item['amount']) * 100)}%"
+            tooltip.left = max(0, (e.local_x or 0) - 55)
+            tooltip.top = max(0, (e.local_y or 0) - 56)
+            tooltip.visible = True
+        elif e.type in _TOUCH_HIDE or index in (None, -1):
+            tooltip.visible = False
+        page.update()
+
+    pie_chart = fch.PieChart(sections=sections, sections_space=2, center_space_radius=54,
+        expand=True, on_event=on_chart_event)
     return ft.Container(
         height=220,
-        content=fch.PieChart(sections=sections, sections_space=2, center_space_radius=54, expand=True),
+        content=ft.Stack(controls=[pie_chart, tooltip]),
     )
 
 
@@ -184,7 +227,7 @@ def breakdown_view(page: ft.Page) -> ft.Control:
             controls.append(feedback.message_panel("この月に支払い予定のサブスクはありません。"))
         else:
             if visible:
-                chart = _pie(visible, visible_colors)
+                chart = _pie(page, visible, visible_colors)
             else:
                 chart = ft.Container(
                     height=220,
