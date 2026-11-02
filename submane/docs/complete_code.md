@@ -1479,6 +1479,7 @@ def app_header(page, title=None, show_back=False, show_actions=True):
 from datetime import datetime
 
 import flet as ft
+import theme
 
 from logic.subscriptions import JST, parse_time
 
@@ -1507,20 +1508,38 @@ def attach_datetime_picker(page, field, *, minimum=None):
             if date is None:
                 return
 
-            def time_selected(event):
-                time = event.control.value
-                if time is None or field.disabled:
+            initial = datetime.combine(date.date(), seed.time())
+            earliest = lower if date.date() == lower.date() else None
+            if earliest is not None:
+                initial = max(initial, earliest)
+            selected = {"value": initial}
+
+            def time_changed(event):
+                # スワイプ中は仮選択だけを更新し，登録欄にはまだ反映しない．
+                if event.control.value is not None:
+                    selected["value"] = event.control.value
+
+            def confirm_time(event):
+                if field.disabled:
                     return
-                field.value = datetime.combine(date.date(), time).strftime("%Y-%m-%dT%H:%M")
+                field.value = datetime.combine(date.date(), selected["value"].time()).strftime("%Y-%m-%dT%H:%M")
                 field.error = None
+                page.pop_dialog()
                 page.update()
 
-            page.show_dialog(ft.TimePicker(
-                value=seed.time(), locale=locale,
-                hour_format=ft.TimePickerHourFormat.H24,
-                entry_mode=ft.TimePickerEntryMode.INPUT,
-                help_text="時刻を選択（日本時間）", hour_label_text="時", minute_label_text="分",
-                confirm_text="確定", cancel_text="キャンセル", on_change=time_selected))
+            wheel = ft.CupertinoDatePicker(
+                value=initial, locale=locale, date_picker_mode=ft.CupertinoDatePickerMode.TIME,
+                use_24h_format=True, minute_interval=1, first_date=earliest,
+                item_extent=40, on_change=time_changed)
+            page.show_dialog(ft.AlertDialog(
+                modal=True, title=theme.text("時刻を選択", size=18, weight="bold"),
+                inset_padding=ft.Padding.symmetric(horizontal=16, vertical=24),
+                content_padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                content=ft.Column(width=240, tight=True, spacing=8, controls=[
+                    theme.text("時・分を上下にスワイプ（日本時間）", size=12, color=theme.INK_SUB),
+                    ft.Container(height=200, content=wheel)]),
+                actions=[ft.TextButton("キャンセル", height=44, on_click=lambda e: page.pop_dialog()),
+                         ft.TextButton("確定", height=44, on_click=confirm_time)]))
 
         page.show_dialog(ft.DatePicker(
             value=seed, first_date=lower.date(), last_date=datetime(2100, 12, 31),
@@ -4638,6 +4657,8 @@ class PageStub:
         pass
     def show_dialog(self, dialog):
         self.dialogs.append(dialog)
+    def pop_dialog(self):
+        return self.dialogs.pop()
     def run_task(self, handler, *args):
         self.tasks.append((handler, args))
 
@@ -4673,11 +4694,15 @@ def test_registration_date_and_time_are_committed_together(label):
     # 日付だけ確定した段階や，時刻選択をキャンセルした段階では入力値を変えない．
     date_picker.value = datetime(2026, 11, 6)
     date_picker.on_change(SimpleNamespace(control=date_picker))
-    clock = page.dialogs[-1]
-    assert isinstance(clock, ft.TimePicker) and clock.hour_format == ft.TimePickerHourFormat.H24
+    dialog = page.dialogs[-1]
+    clock = next(c for c in walk(dialog) if isinstance(c, ft.CupertinoDatePicker))
+    assert clock.date_picker_mode == ft.CupertinoDatePickerMode.TIME and clock.use_24h_format
+    assert clock.minute_interval == 1
     assert field.value == before
-    clock.value = time(16, 45)
+    clock.value = datetime(2026, 11, 6, 16, 45)
     clock.on_change(SimpleNamespace(control=clock))
+    assert field.value == before
+    next(c for c in dialog.actions if c.content == '確定').on_click(None)
     assert field.value == '2026-11-06T16:45'
 
 
@@ -4760,6 +4785,54 @@ def test_slow_screen_does_not_replace_a_newer_route(monkeypatch):
         stack = next(c for c in walk(page.views[0]) if isinstance(c, ft.Stack))
         assert stack.controls[-1].content.value == navigation.DEADLINE
     asyncio.run(scenario())
+
+
+def test_swiping_then_cancelling_keeps_the_original_datetime():
+    page = PageStub()
+    field = ft.TextField(label='入会日時', value='2026-11-02T09:30')
+    attach_datetime_picker(page, field)
+    field.on_click(None)
+    calendar = page.dialogs[-1]
+    calendar.value = datetime(2026, 11, 8)
+    calendar.on_change(SimpleNamespace(control=calendar))
+    dialog = page.dialogs[-1]
+    wheel = next(c for c in walk(dialog) if isinstance(c, ft.CupertinoDatePicker))
+    wheel.value = datetime(2026, 11, 8, 21, 15)
+    wheel.on_change(SimpleNamespace(control=wheel))
+    next(c for c in dialog.actions if c.content == 'キャンセル').on_click(None)
+    assert field.value == '2026-11-02T09:30'
+    field.on_click(None)
+    assert page.dialogs[-1].value == datetime(2026, 11, 2, 9, 30)
+
+
+@pytest.mark.parametrize('hour, minute', [(0, 0), (23, 59)])
+def test_wheel_accepts_start_and_end_of_day(hour, minute):
+    page = PageStub()
+    field = ft.TextField(label='入会日時', value='2026-11-02T09:30')
+    attach_datetime_picker(page, field)
+    field.on_click(None)
+    calendar = page.dialogs[-1]
+    calendar.value = datetime(2026, 11, 2)
+    calendar.on_change(SimpleNamespace(control=calendar))
+    dialog = page.dialogs[-1]
+    wheel = next(c for c in walk(dialog) if isinstance(c, ft.CupertinoDatePicker))
+    wheel.value = datetime(2026, 11, 2, hour, minute)
+    wheel.on_change(SimpleNamespace(control=wheel))
+    next(c for c in dialog.actions if c.content == '確定').on_click(None)
+    assert field.value == f'2026-11-02T{hour:02}:{minute:02}'
+
+
+def test_trial_time_wheel_starts_no_earlier_than_joining_on_the_same_day():
+    page = PageStub()
+    field = ft.TextField(label='終了日時', value='2026-11-02T10:00')
+    attach_datetime_picker(page, field, minimum=lambda: '2026-11-01T18:20')
+    field.on_click(None)
+    calendar = page.dialogs[-1]
+    calendar.value = datetime(2026, 11, 1)
+    calendar.on_change(SimpleNamespace(control=calendar))
+    wheel = next(c for c in walk(page.dialogs[-1]) if isinstance(c, ft.CupertinoDatePicker))
+    assert wheel.first_date == datetime(2026, 11, 1, 18, 20)
+    assert wheel.value == datetime(2026, 11, 1, 18, 20)
 ```
 
 ## tests/test_ui_workflow.py

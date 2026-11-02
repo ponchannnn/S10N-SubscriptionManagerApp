@@ -150,8 +150,8 @@ def main(page: ft.Page) -> None:
                 clear_tab_state()
                 page.views.clear()
                 slider = TabSlider(page, route, _loading())
-                footer = ft.Container(content=tab_bar(page, route))
                 header = ft.Container(content=app_header(page))
+                footer = ft.Container(content=tab_bar(page, route))
                 view = _shell(route, header, slider.root, footer)
                 tab_state.update(view=view, slider=slider, footer=footer, header=header)
                 page.views.append(view)
@@ -171,7 +171,7 @@ def main(page: ft.Page) -> None:
             return
         target.content = content
         if route in navigation.TAB_ROUTES and tab_state["header"] is not None:
-            # 読み込んだ最新の一覧でベルの件数を数え直す
+            # 読み込んだ最新の一覧でベルの件数を数え直すため，ヘッダーを作り直す
             tab_state["header"].content = app_header(page)
         page.update()
 
