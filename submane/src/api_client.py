@@ -384,6 +384,20 @@ def set_yearly_mode(mode: str) -> None:
     local_db.set_state("yearly_mode", mode)
 
 
+def get_chart_hidden() -> set[str]:
+    """内訳の円グラフで非表示にしたサブスクのID(文字列)。ログアウトで消える。"""
+    value = local_db.get_state("chart_hidden")
+    try:
+        return {str(sub_id) for sub_id in json.loads(value)} if value else set()
+    except (ValueError, TypeError):
+        return set()
+
+
+def set_chart_hidden(ids) -> None:
+    """円グラフで非表示にするサブスクのIDを端末に保存する。"""
+    local_db.set_state("chart_hidden", json.dumps(sorted(str(sub_id) for sub_id in ids)))
+
+
 def last_updated() -> str | None:
     """前回 list_subscriptions() でサーバから取得できた時刻(ISO文字列)。取得したことがなければ None。"""
     return local_db.get_state("subscriptions_fetched_at")
