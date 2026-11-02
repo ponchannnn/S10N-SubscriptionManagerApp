@@ -254,6 +254,15 @@ def log_out() -> None:
     local_db.clear_user_data()
 
 
+def delete_account() -> None:
+    """アカウントを削除する。サーバ側の契約データも一緒に消え、ログアウト状態になる。"""
+    global _logged_in
+    if not config.USE_DUMMY_DATA:
+        _request("DELETE", ENDPOINTS["me"])
+    _logged_in = False
+    local_db.clear_user_data()
+
+
 # ------------------------------------------------------------------
 # サブスク
 # ------------------------------------------------------------------

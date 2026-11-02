@@ -60,7 +60,7 @@
 | 2.3-1〜3 | 当月支払い見込み・円グラフ・明細 | （計算） | `GET /summary` |
 | 2.4-1 | 次回更新日の自動算出 | （計算） | 各レスポンスの `next_payment_at` |
 | 3.1 | 主要サブスク基本データの登録・更新・削除 | `services`, `service_plans` | シード（`db/seeds.rb`）で管理 |
-| 3.2-1 | ユーザアカウント情報の管理 | `users` | `GET /me` |
+| 3.2-1 | ユーザアカウント情報の管理 | `users` | `GET /me`, `DELETE /me` |
 | 3.2-2 | ユーザ登録サブスクデータの同期・保存 | `subscriptions` | 一覧 API を毎回取り直す（§6.4） |
 | 3.2-3 | アプリ内サブスク決済状態の管理 | `users.app_plan_status` | `GET /me`（デモのため状態のみ） |
 
@@ -332,6 +332,7 @@ trial_ends_at がある かつ 現在 < trial_ends_at  → "trial"（時計マ�
 | A | POST | `/session` | 不要 | ログイン | `log_in` |
 | A | DELETE | `/session` | 要 | ログアウト | `log_out` |
 | B | GET | `/me` | 要 | 自分の情報（起動時のログイン確認にも使う） | ― |
+| B | DELETE | `/me` | 要 | アカウント削除（契約も一緒に削除） | `delete_account` |
 | A | GET | `/services` | 要 | 定番サービスの検索・一覧（プラン込み） | `search_services` |
 | A | GET | `/subscriptions` | 要 | 自分の契約一覧 | `list_subscriptions` |
 | A | GET | `/subscriptions/:id` | 要 | 契約 1 件 | `get_subscription` |
@@ -377,6 +378,11 @@ Request は signup と同じ。200 + 同じ形のレスポンス + `Set-Cookie`�
 #### `GET /me`
 
 200 + signup と同じ `user`。未ログインなら 401（アプリは起動時にこれでログイン画面へ移るか決める）。
+
+#### `DELETE /me`
+
+アカウントを削除する。`sessions`・`subscriptions` はユーザに紐づくものが一緒に削除される（物理削除）。
+成功時は 204 No Content + Cookie を消す。未ログインなら 401。
 
 ### 6.2 サービスオブジェクト
 

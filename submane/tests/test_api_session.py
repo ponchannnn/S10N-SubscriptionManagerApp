@@ -39,3 +39,31 @@ def test_http_errors_become_api_errors(monkeypatch, status):
     ))
     with pytest.raises(ApiError):
         api_client.list_subscriptions()
+
+
+def test_delete_account_calls_the_api_and_clears_local_state(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(204)
+
+    monkeypatch.setattr(config, "USE_DUMMY_DATA", False)
+    monkeypatch.setattr(api_client, "_client", httpx.Client(
+        base_url="https://test.example", transport=httpx.MockTransport(handler)))
+    api_client._logged_in = True
+
+    api_client.delete_account()
+
+    assert len(seen) == 1
+    assert seen[0].method == "DELETE"
+    assert seen[0].url.path == "/api/v1/me"
+    assert api_client.is_logged_in() is False
+
+
+def test_delete_account_in_dummy_mode_just_logs_out():
+    api_client._logged_in = True
+
+    api_client.delete_account()
+
+    assert api_client.is_logged_in() is False

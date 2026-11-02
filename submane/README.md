@@ -193,6 +193,7 @@ APIの仕様を決めるのはAPI担当です。この章は「アプリ側が�
 |---|---|---|
 | 会員登録 | 会員登録・ログイン | `sign_up(email, password)` |
 | ログイン、ログアウト | 会員登録・ログイン | `log_in(email, password)` / `log_out()` |
+| アカウント削除(契約も一緒に削除) | アカウント | `delete_account()` |
 | 自分のサブスク一覧を取得 | ホーム、内訳、期限 | `list_subscriptions()` |
 | サブスクを1件取得 | 詳細 | `get_subscription(sub_id)` |
 | サブスクを登録 | 登録 | `create_subscription(data)` |
