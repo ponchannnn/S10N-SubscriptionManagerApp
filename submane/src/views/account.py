@@ -33,13 +33,43 @@ def _signed_in_view(page: ft.Page) -> ft.Control:
         await asyncio.to_thread(api_client.log_out)
         navigation.reload(page)
 
+    def open_delete_account_dialog(event):
+        async def confirm_delete(event):
+            cancel_button.disabled = True
+            delete_button.disabled = True
+            delete_button.content = ft.ProgressRing(width=16, height=16, color=theme.ON_ACCENT)
+            dialog.update()
+            await asyncio.to_thread(api_client.delete_account)
+            page.pop_dialog()
+            page.show_dialog(ft.SnackBar(ft.Text("アカウントを削除しました．")))
+            navigation.reload(page)
+
+        cancel_button = ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog())
+        delete_button = ft.TextButton("削除する", on_click=confirm_delete,
+            style=ft.ButtonStyle(color=theme.DANGER))
+        dialog = ft.AlertDialog(
+            title=ft.Text("アカウントの削除"),
+            content=ft.Text("アカウントと登録済みのサブスク情報をすべて削除します．この操作は取り消せません．"),
+            actions=[cancel_button, delete_button],
+        )
+        page.show_dialog(dialog)
+
     log_out_button = ft.OutlinedButton("ログアウト", on_click=log_out, height=theme.TAP_MIN)
+    delete_account_button = ft.OutlinedButton(
+        content=ft.Row([ft.Icon(ft.Icons.DELETE_OUTLINE), ft.Text("アカウントを削除")],
+            alignment=ft.MainAxisAlignment.CENTER),
+        style=ft.ButtonStyle(color=theme.DANGER),
+        height=theme.TAP_MIN,
+        on_click=open_delete_account_dialog,
+    )
     return ft.Column(
         spacing=16,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         controls=[
             theme.text("ログイン中", size=26, weight="bold"),
             theme.text(email, size=14, color=theme.INK_SUB),
             log_out_button,
+            delete_account_button,
         ],
     )
 
