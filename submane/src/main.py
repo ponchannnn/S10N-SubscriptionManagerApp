@@ -152,7 +152,7 @@ def main(page: ft.Page) -> None:
                 slider = TabSlider(page, route, _loading())
                 header = ft.Container(content=app_header(page))
                 footer = ft.Container(content=tab_bar(page, route))
-                view = _shell(route, header, slider.root, footer)
+                view = _shell(route, header, slider.control, footer)
                 tab_state.update(view=view, slider=slider, footer=footer, header=header)
                 page.views.append(view)
                 target = slider.root.controls[0]

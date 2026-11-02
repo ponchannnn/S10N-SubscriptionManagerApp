@@ -113,6 +113,26 @@ def test_tab_slides_in_both_directions_and_discards_old_tasks():
     asyncio.run(scenario())
 
 
+def test_tab_slider_never_leaves_old_screens_when_transitions_overlap():
+    async def scenario():
+        page = PageStub()
+        slider = TabSlider(page, navigation.HOME, ft.Text('home'))
+        # 1つ目のアニメーションの途中で次のタブへ移る
+        slider.show(navigation.BREAKDOWN, ft.Text('breakdown'))
+        first = asyncio.create_task(page.tasks[0][0](*page.tasks[0][1]))
+        await asyncio.sleep(0.1)
+        slider.show(navigation.DEADLINE, ft.Text('deadline'))
+        await asyncio.gather(first, *(handler(*args) for handler, args in page.tasks[1:]))
+        assert [layer.content.value for layer in slider.root.controls] == ['deadline']
+        assert slider.root.controls[0].offset.x == 0
+        # 層ごとに key が違い，前の画面の部品が使い回されない
+        assert slider.root.controls[0].key != TabSlider._layer(ft.Text('x')).key
+        # 切り取りは外側の Container で行う
+        assert slider.control.content is slider.root
+        assert slider.control.clip_behavior == ft.ClipBehavior.HARD_EDGE
+    asyncio.run(scenario())
+
+
 def test_route_changes_reuse_tab_view_and_return_from_registration(monkeypatch):
     async def scenario():
         monkeypatch.setattr(app.local_db, 'init_db', lambda: None)

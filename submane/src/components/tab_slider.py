@@ -1,11 +1,13 @@
 """下部タブの位置を保ち，画面の中身を左右にスライドする．"""
 import asyncio
+import itertools
 
 import flet as ft
 
 import navigation
 
 ANIMATION_MS = 280
+_layer_ids = itertools.count()
 
 
 class TabSlider:
@@ -16,11 +18,14 @@ class TabSlider:
         self.generation = 0
         self.root = ft.Stack(expand=True, clip_behavior=ft.ClipBehavior.HARD_EDGE,
                              controls=[self._layer(content)])
+        # Stack の clip はずらした(offset)子を切り取らないので，外側の Container で切り取る
+        self.control = ft.Container(content=self.root, expand=True, clip_behavior=ft.ClipBehavior.HARD_EDGE)
 
     @staticmethod
     def _layer(content, offset=0):
+        # 層ごとに別の key を付け，前の画面の部品が次の画面に使い回されないようにする
         return ft.Container(content=content, left=0, top=0, right=0, bottom=0,
-                            offset=ft.Offset(offset, 0))
+                            offset=ft.Offset(offset, 0), key=f"tab-layer-{next(_layer_ids)}")
 
     def show(self, route, content):
         self.generation += 1
@@ -39,10 +44,19 @@ class TabSlider:
         self.page.run_task(self._animate, outgoing, incoming, direction, generation)
         return incoming
 
+    def _drop(self, layer):
+        """layer がまだ一番上でなく残っていれば取り除く．"""
+        controls = self.root.controls
+        if layer in controls and controls[-1] is not layer:
+            self.root.controls = [c for c in controls if c is not layer]
+            self.page.update()
+
     async def _animate(self, outgoing, incoming, direction, generation):
         # 初期位置を描画してから，次のフレームで移動を開始する．
         await asyncio.sleep(0.04)
         if generation != self.generation:
+            # 次の遷移が始まっていても，この遷移の古い画面は必ず片付ける
+            self._drop(outgoing)
             return
         animation = ft.Animation(ANIMATION_MS, ft.AnimationCurve.EASE_OUT_CUBIC)
         outgoing.animate_offset = animation
@@ -50,10 +64,8 @@ class TabSlider:
         outgoing.offset = ft.Offset(-direction, 0)
         incoming.offset = ft.Offset(0, 0)
         self.page.update()
-        await asyncio.sleep(ANIMATION_MS / 1000)
-        if generation == self.generation:
-            self.root.controls = [incoming]
-            self.page.update()
+        await asyncio.sleep(ANIMATION_MS / 1000 + 0.04)
+        self._drop(outgoing)
 
     def cancel(self):
         """詳細・登録への移動やログアウト時に，古いアニメーションを無効化する．"""
