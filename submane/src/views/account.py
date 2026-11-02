@@ -64,6 +64,7 @@ def _signed_in_view(page: ft.Page) -> ft.Control:
     )
     return ft.Column(
         spacing=16,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         controls=[
             theme.text("ログイン中", size=26, weight="bold"),
             theme.text(email, size=14, color=theme.INK_SUB),
