@@ -16,8 +16,6 @@ import theme
 from components import feedback
 from logic import payments
 
-MAX_SECTIONS = 6          # 円グラフで個別に出す件数。残りは「その他」にまとめる
-OTHERS_COLOR = theme.OFF_INK
 _MODE_LABELS = {
     payments.MODE_BILLING: "年額は更新月に計上",
     payments.MODE_AVERAGE: "年額を月割り",
@@ -46,40 +44,34 @@ def _cycle_text(sub: dict, mode: str) -> str:
 
 
 def _pie(items: list[dict], colors: list[str]) -> ft.Control:
-    """サービス別の支出割合の円グラフを返す。"""
+    """サービス別の支出割合の円グラフを返す。割合はグラフに出す items の合計に対して計算する。"""
     title_style = ft.TextStyle(size=12, color=theme.ON_ACCENT, font_family=theme.FONT_BOLD)
-    shown = items[:MAX_SECTIONS]
+    chart_total = sum(item["amount"] for item in items)
+
+    def share(amount: int) -> float:
+        return amount / chart_total if chart_total else 0.0
+
     sections = [
         fch.PieChartSection(
             value=item["amount"],
             color=colors[index],
             radius=48,
-            title=f"{round(item['ratio'] * 100)}%" if item["ratio"] >= 0.08 else "",
+            title=f"{round(share(item['amount']) * 100)}%" if share(item["amount"]) >= 0.08 else "",
             title_style=title_style,
         )
-        for index, item in enumerate(shown)
+        for index, item in enumerate(items)
     ]
-    rest = items[MAX_SECTIONS:]
-    if rest:
-        ratio = sum(item["ratio"] for item in rest)
-        sections.append(
-            fch.PieChartSection(
-                value=sum(item["amount"] for item in rest),
-                color=OTHERS_COLOR,
-                radius=48,
-                title=f"{round(ratio * 100)}%" if ratio >= 0.08 else "",
-                title_style=title_style,
-            )
-        )
     return ft.Container(
         height=220,
         content=fch.PieChart(sections=sections, sections_space=2, center_space_radius=54, expand=True),
     )
 
 
-def _item_row(page: ft.Page, item: dict, color: str, mode: str, last: bool) -> ft.Control:
-    """金額一覧の1行を返す。タップで詳細画面へ。"""
+def _item_row(page: ft.Page, item: dict, color: str, mode: str, last: bool,
+              hidden: bool, on_toggle) -> ft.Control:
+    """金額一覧の1行を返す。チェックで円グラフへの表示を切り替え、それ以外のタップで詳細画面へ。"""
     sub = item["sub"]
+    text_color = theme.INK_SUB if hidden else theme.INK
     return ft.Container(
         padding=ft.Padding.symmetric(horizontal=16, vertical=12),
         border=None if last else ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)),
@@ -88,12 +80,17 @@ def _item_row(page: ft.Page, item: dict, color: str, mode: str, last: bool) -> f
             spacing=12,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(width=12, height=12, border_radius=3, bgcolor=color),
+                ft.Checkbox(
+                    value=not hidden,
+                    fill_color=color,
+                    tooltip="円グラフに表示",
+                    on_change=lambda e: on_toggle(sub["id"]),
+                ),
                 ft.Column(
                     expand=True,
                     spacing=0,
                     controls=[
-                        theme.text(sub["name"], size=14, weight="bold", max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                        theme.text(sub["name"], size=14, weight="bold", color=text_color, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                         theme.text(_cycle_text(sub, mode), size=11, color=theme.INK_SUB, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                     ],
                 ),
@@ -101,8 +98,8 @@ def _item_row(page: ft.Page, item: dict, color: str, mode: str, last: bool) -> f
                     spacing=0,
                     horizontal_alignment=ft.CrossAxisAlignment.END,
                     controls=[
-                        theme.text(theme.yen(item["amount"]), size=14, weight="bold"),
-                        theme.text(f"{round(item['ratio'] * 100)}%", size=11, color=theme.INK_SUB),
+                        theme.text(theme.yen(item["amount"]), size=14, weight="bold", color=text_color),
+                        theme.text("グラフ非表示" if hidden else f"{round(item['ratio'] * 100)}%", size=11, color=theme.INK_SUB),
                     ],
                 ),
             ],
@@ -122,6 +119,7 @@ def breakdown_view(page: ft.Page) -> ft.Control:
         "year": now.year,
         "month": now.month,
         "mode": api_client.get_yearly_mode(),
+        "hidden": api_client.get_chart_hidden(),  # 円グラフから外したサブスクのID
     }
     body = ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
@@ -130,7 +128,11 @@ def breakdown_view(page: ft.Page) -> ft.Control:
         year, month, mode = state["year"], state["month"], state["mode"]
         summary = payments.summarize(subs, year, month, mode)
         items = summary["items"]
-        colors = [theme.tile_color(index) if index < MAX_SECTIONS else OTHERS_COLOR for index in range(len(items))]
+        hidden = state["hidden"]
+        visible = [item for item in items if str(item["sub"]["id"]) not in hidden]
+        # 色はグラフに出す順で割り当て、グラフと一覧の色をそろえる
+        visible_colors = [theme.tile_color(index) for index in range(len(visible))]
+        color_by_id = {str(item["sub"]["id"]): color for item, color in zip(visible, visible_colors)}
         is_this_month = (year, month) == (now.year, now.month)
 
         controls = [
@@ -181,18 +183,32 @@ def breakdown_view(page: ft.Page) -> ft.Control:
         if not items:
             controls.append(feedback.message_panel("この月に支払い予定のサブスクはありません。"))
         else:
-            controls.append(ft.Container(padding=ft.Padding.only(top=20, bottom=20), content=_pie(items, colors)))
-            if len(items) > MAX_SECTIONS:
-                controls.append(
-                    ft.Container(
-                        padding=ft.Padding.only(bottom=8),
-                        content=theme.text(
-                            f"円グラフは上位{MAX_SECTIONS}件を表示し、残りは「その他」(灰色)にまとめています。",
-                            size=11,
+            if visible:
+                chart = _pie(visible, visible_colors)
+            else:
+                chart = ft.Container(
+                    height=220,
+                    alignment=ft.Alignment.CENTER,
+                    content=theme.text("グラフに表示するサブスクを選んでください。", size=13, color=theme.INK_SUB),
+                )
+            controls.append(ft.Container(padding=ft.Padding.only(top=20, bottom=20), content=chart))
+            # グラフに出す件数と「すべて表示」
+            hidden_count = len(items) - len(visible)
+            controls.append(
+                ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    height=40,
+                    controls=[
+                        theme.text(
+                            f"グラフに表示：{len(visible)} / {len(items)}件" if hidden_count else "チェックを外すとグラフから除けます",
+                            size=12,
                             color=theme.INK_SUB,
                         ),
-                    )
+                        ft.TextButton("すべて表示", on_click=lambda e: show_all()) if hidden_count else ft.Container(),
+                    ],
                 )
+            )
             controls.append(
                 ft.Container(
                     bgcolor=theme.SURFACE,
@@ -202,7 +218,14 @@ def breakdown_view(page: ft.Page) -> ft.Control:
                     content=ft.Column(
                         spacing=0,
                         controls=[
-                            _item_row(page, item, colors[index], mode, last=index == len(items) - 1)
+                            _item_row(
+                                page, item,
+                                color_by_id.get(str(item["sub"]["id"]), theme.LINE),
+                                mode,
+                                last=index == len(items) - 1,
+                                hidden=str(item["sub"]["id"]) in hidden,
+                                on_toggle=toggle,
+                            )
                             for index, item in enumerate(items)
                         ],
                     ),
@@ -213,6 +236,20 @@ def breakdown_view(page: ft.Page) -> ft.Control:
     def move_month(step: int) -> None:
         mover = payments.next_month if step > 0 else payments.previous_month
         state["year"], state["month"] = mover(state["year"], state["month"])
+        render()
+        page.update()
+
+    def toggle(sub_id) -> None:
+        """1件の円グラフへの表示・非表示を切り替える。"""
+        key = str(sub_id)
+        state["hidden"] ^= {key}
+        api_client.set_chart_hidden(state["hidden"])  # 端末に保存し、次回起動後も覚えておく
+        render()
+        page.update()
+
+    def show_all() -> None:
+        state["hidden"] = set()
+        api_client.set_chart_hidden(state["hidden"])
         render()
         page.update()
 
